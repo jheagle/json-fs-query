@@ -87,46 +87,56 @@ from `main` as 3.2.0: queries return exactly what 3.1.4 returns (join and write 
 `main` back into this branch with a real merge commit.
   **Done 2026-11-06:** 3.2.0 published (#120, merge commit; queries checked byte-identical to 3.1.4 with a 52-query
   script), `main` merged back (0b0d048). Results for 3b-3d together are the last run in `BENCHMARKS.md` before task 4.
-- [ ] **4. Write set: batched, all-or-nothing writes.** A query's writes are collected (path -> new content, or delete)
+- [x] **4. Write set: batched, all-or-nothing writes.** A query's writes are collected (path -> new content, or delete)
   and applied once at the end: a 1,000-row insert writes the record file and each index once, not 1,000 times. Every row
   is checked before anything is written, so a failed multi-row insert or update changes nothing (step 3 of the
   transactions spike). Files are written atomically (temporary file, then rename), so a crash never leaves a half-written
   file (step 2 of the spike).
-- [ ] **5. Parallel reads.** Entry files are read concurrently (with a limit), in Node and over `fetch()`.
+  Done in #121.
+- [x] **5. Parallel reads.** Entry files are read concurrently (with a limit), in Node and over `fetch()`.
+  Done in #122.
 
 ### Formats
 
-- [ ] **6. Compact JSON by default.** Generated files (indexes, record files, `__RECORDS.json`) and entry files are
+- [x] **6. Compact JSON by default.** Generated files (indexes, record files, `__RECORDS.json`) and entry files are
   written compact; `configure({ format: 'pretty' })` keeps them pretty. Reading accepts both. A `json-fs-query format`
   helper (or exported function) rewrites a whole database in the chosen format. That rewrite is the first thing that
   has to list a folder, so it adds `listFiles` to the storage module (later uses: checking a packed table against the
   files on disk in 7, rebuilding a missing `__RECORDS.json` from the record files).
-- [ ] **7. Packed tables for static hosting.** A build step writes each record's rows (and its indexes) into one file;
+  Done in #123.
+- [x] **7. Packed tables for static hosting.** A build step writes each record's rows (and its indexes) into one file;
   the browser reads a whole record in one request when the packed file exists, and falls back to entry files when it
   doesn't. The entry files stay the copy that's edited and reviewed in git.
+  Done in #124.
 
 ### Usability (found during the workout and blog imports)
 
-- [ ] **8. Multi-row insert syntax**, e.g. `insert workouts values (date = '2026-11-01', ...), (date = '2026-11-02', ...)`,
+- [x] **8. Multi-row insert syntax**, e.g. `insert workouts values (date = '2026-11-01', ...), (date = '2026-11-02', ...)`,
   so a batch is one statement (fast with 4).
   Measured with 4 (one `insertEntity` statement): 1,000 rows 1 s (vs 6.3 s as 1,000 one-row inserts), but 5,000 rows
   15.7 s: each row still reads, parses and re-serializes the growing record file and indexes from the write set, so the
   work is quadratic in memory instead of on disk. With this task, `insertEntity` loads the record and its indexes once
   per statement, checks each row against them plus the statement's earlier rows (as `assertUniqueWithinUpdate` does for
   update), and writes them once.
-- [ ] **9. `null` in an optional field.** Inserting `null` into an optional (not nullable) field fails today; treat it
+  Done in #125.
+- [x] **9. `null` in an optional field.** Inserting `null` into an optional (not nullable) field fails today; treat it
   as leaving the field out, or say so in the error.
-- [ ] **10. Clearer errors.** A malformed join (`read workouts on ...` without `workouts.<record>`) fails with
+  Done in #126.
+- [x] **10. Clearer errors.** A malformed join (`read workouts on ...` without `workouts.<record>`) fails with
   `Could not read .json`; say what's wrong in query terms.
+  Done in #127.
+
 ### Schema
 
-- [ ] **11. `alter` for fields**: add, drop and rename a field, and change whether it's optional or nullable, on an
+- [x] **11. `alter` for fields**: add, drop and rename a field, and change whether it's optional or nullable, on an
   existing record (today the only way is editing its JSON by hand). Adding a field with a default fills existing rows;
   dropping one removes it from every entry and from any index or key that uses it (or refuses while a key does).
-- [ ] **12. Several databases, and switching between them.** `create database <name>`, `use <name>`,
+  Done in #128.
+- [x] **12. Several databases, and switching between them.** `create database <name>`, `use <name>`,
   `drop database <name>` and `show databases`, plus `configure()` naming the active one. One program can work with
   several databases (e.g. workout-planner's real data and a test copy) without reconfiguring paths by hand. The browser
   side reads whichever database it's pointed at.
+  Done in #129.
 
 ### Close
 
