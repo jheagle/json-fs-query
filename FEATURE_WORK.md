@@ -140,10 +140,17 @@ from `main` as 3.2.0: queries return exactly what 3.1.4 returns (join and write 
 
 ### Close
 
-- [ ] **13. Docs and positioning.** README opening (what it's for, when to use it, when to use SQLite instead), the
+- [x] **13. Docs and positioning.** README opening (what it's for, when to use it, when to use SQLite instead), the
   benchmark numbers, a static-site example.
-- [ ] **14. Before merging ✱:** re-sync with `main`, full suite, benchmarks against the baseline, workout-planner's full
+  Done in #130 (the example checked in Node and in headless Chromium from a static folder).
+- [x] **14. Before merging ✱:** re-sync with `main`, full suite, benchmarks against the baseline, workout-planner's full
   history imported and its tests passing, then a release PR.
+  Checked 2026-11-09: `main` has nothing the epic lacks (no sync needed); 1,145 tests pass; the benchmark run is the
+  last in `BENCHMARKS.md` (one join at 1,000 rows 5.2 s -> 176 ms, browser 15.2 s -> 732 ms, 20 ms packed).
+  workout-planner's draft #47 with this build: the real import (116 exercises, 1,446 workouts) takes 16 s (was ~13 min),
+  a second run adds nothing and leaves the database byte-identical, `getMusclePriority` takes 0.3 s (was 9-11 s), and
+  all 78 tests pass once its 9 seed-data assertions follow the imported data (no timeouts). Files stay compatible both
+  ways: 3.2.0 reads and inserts into a database this build wrote.
 
 ## Out of scope (tracked separately in TASKS.md)
 
