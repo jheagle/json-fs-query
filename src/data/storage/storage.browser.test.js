@@ -27,6 +27,54 @@ describe('storage (browser)', () => {
   })
 })
 
+describe('fetchOptions (browser)', () => {
+  const originalFetch = global.fetch
+
+  afterEach(() => {
+    global.fetch = originalFetch
+    configure({ fetchOptions: undefined })
+  })
+
+  test('every read passes the configured fetchOptions to fetch(), and none without them', async () => {
+    configure({ databasePath: 'my-data/', relativePath: 'http://example.com/', fetchOptions: { cache: 'no-cache' } })
+    global.fetch = jest.fn().mockResolvedValue({ text: () => Promise.resolve('{}') })
+    await readJson('foo.json')
+    expect(global.fetch).toHaveBeenLastCalledWith('http://example.com/my-data/foo.json', { cache: 'no-cache' })
+    configure({ fetchOptions: undefined })
+    await readJson('bar.json')
+    expect(global.fetch.mock.calls[1]).toEqual(['http://example.com/my-data/bar.json'])
+  })
+
+  test('a whole query reads every file with them, and so does the list of databases', async () => {
+    const files = {
+      'http://example.com/db/__RECORDS.json': { path: '', definition: [], keys: [], entries: ['things.json'] },
+      'http://example.com/db/things.json': {
+        path: 'things',
+        definition: [{ name: '_id', type: 'string', optional: false }],
+        keys: [{ type: 'primary', fields: ['_id'], lookup: 'pk__id.json' }],
+        entries: ['t1.json']
+      },
+      'http://example.com/db/things/t1.json': { _id: 't1' },
+      'http://example.com/dbs/__DATABASES.json': ['db']
+    }
+    const init = { cache: 'no-cache', headers: { 'x-from': 'json-fs-query' } }
+    global.fetch = jest.fn().mockImplementation(location => Promise.resolve(location in files
+      ? { ok: true, text: () => Promise.resolve(JSON.stringify(files[location])) }
+      : { ok: false, text: () => Promise.resolve('') }))
+    configure({ databasePath: 'db/', relativePath: 'http://example.com/', fetchOptions: init })
+    const [rows] = await query('read things')
+    expect(rows).toEqual([{ _id: 't1' }])
+    expect(global.fetch.mock.calls.length).toBeGreaterThan(0)
+    global.fetch.mock.calls.forEach(call => expect(call[1]).toBe(init))
+    global.fetch.mockClear()
+    configure({ databasesPath: 'dbs/', database: 'db' })
+    const [names] = await query('show databases')
+    expect(names).toEqual(['db'])
+    expect(global.fetch).toHaveBeenCalledWith('http://example.com/dbs/__DATABASES.json', init)
+    configure({ databasesPath: undefined, database: undefined })
+  })
+})
+
 describe('read cache (browser)', () => {
   const originalFetch = global.fetch
 

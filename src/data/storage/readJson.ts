@@ -3,6 +3,7 @@ import { storagePath } from './storagePath'
 import { nodeFiles } from './nodeFiles'
 import { cachedRead } from './readCache'
 import { pendingFile } from './writeSet'
+import { configuredFetch } from '../utilities/config'
 
 /**
  * Read one file of the database as text, from wherever readJson would read it (the statement's write set, the read
@@ -20,7 +21,7 @@ export const readText = async (path: string): Promise<string> => {
     ? pending
     : cachedRead(location, () => jsEnv.isNode
       ? nodeFiles().readFile(location, 'utf8')
-      : fetch(location).then(response => response.text()))
+      : configuredFetch(location).then(response => response.text()))
 }
 
 /**

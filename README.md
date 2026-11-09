@@ -613,7 +613,8 @@ configure({
   format: 'compact',           // how files are written: 'compact' or 'pretty' (default 'compact')
   packedReads: undefined,      // use packed files (see packDatabase); default true in a browser, false in Node
   databasesPath: undefined,    // a folder holding several databases (see Several databases)
-  database: undefined          // the one of them in use
+  database: undefined,         // the one of them in use
+  fetchOptions: undefined      // passed to every fetch() in a browser, such as { cache: 'no-cache' }
 })
 ```
 
@@ -623,6 +624,11 @@ it doesn't fit a particular workflow, mirroring MySQL's own toggleable `foreign_
 Reads fetch several entry files at once, `readConcurrency` at a time, and keep the record's order. In a browser each
 file is one request: 16 suits HTTP/2 static hosts (such as GitHub Pages), while over HTTP/1.1 a browser only opens about
 6 connections per host anyway. `readConcurrency: 1` reads one file at a time, as every read did before this setting.
+
+`fetchOptions` is given to every `fetch()` a browser read makes, as its second argument. By default reads use the
+browser's normal HTTP cache, which suits data that only changes when the site is deployed. When something writes the
+files while the page is in use (a local server, say), `{ cache: 'no-cache' }` makes the browser check every file with the
+server before using its cached copy: an unchanged file comes back as a short "not modified", a changed one is read again.
 
 ### Several databases: `databasesPath`, `use`
 

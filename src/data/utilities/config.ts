@@ -9,6 +9,8 @@ export type RuntimeSettings = {
   // The folder holding several databases, and the one in use (see activeDatabasePath)
   databasesPath?: string
   database?: string
+  // Passed to every fetch() a browser read makes (see readText), such as { cache: 'no-cache' }
+  fetchOptions?: RequestInit
 }
 
 const defaults: RuntimeSettings = {
@@ -105,6 +107,10 @@ export const trackDatabaseCall = (): (() => void) => {
  * packedReads (default: true in a browser, false in Node) is whether reads use a record's packed file (see
  * packDatabase) when it has one that matches the record, instead of reading each entry file.
  *
+ * fetchOptions (default none) is passed to every fetch() a browser read makes, as fetch's second argument: for example
+ * { cache: 'no-cache' }, so a page whose data a local server writes always checks for a newer file instead of reading
+ * one from the browser's cache. Not used in Node.
+ *
  * Changing databasePath while calls are still running or queued throws (see trackDatabaseCall): await them first.
  * @param newSettings
  * @throws {Error} When databasePath would point to another folder while database calls are in progress.
@@ -143,6 +149,16 @@ export const configure = (newSettings: Partial<RuntimeSettings>): void => {
  * @param key
  * @param defaultValue
  */
+/**
+ * fetch() with the configured fetchOptions as its second argument, or with none when they aren't set (so a call is
+ * exactly what it was before the setting existed).
+ * @param location
+ */
+export const configuredFetch = (location: string): Promise<Response> => {
+  const options = getSetting('fetchOptions', undefined)
+  return options ? fetch(location, options) : fetch(location)
+}
+
 export const getSetting = <K extends keyof RuntimeSettings>(key: K, defaultValue: RuntimeSettings[K]): RuntimeSettings[K] => {
   return typeof settings[key] !== 'undefined' ? settings[key] : defaultValue
 }
