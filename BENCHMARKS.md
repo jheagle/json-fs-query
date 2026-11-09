@@ -358,3 +358,33 @@ a table of 5,000 take 1.4 s (13.6 s when each row looked at every stored row), 2
 | browser packed join 2 | 79 ms | 42 ms |
 | files on disk | 129 | 1,119 |
 | bytes of data | 39 KB | 359 KB |
+
+### tasks 9-12, the README's numbers (2026-11-09, Node v24.21.0, 11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz)
+
+Tasks 9-12 (null in optional fields, clearer errors, `alter`, several databases) don't change how files are read or
+written, and this run (on the epic after #129) matches task 8's within run-to-run noise. These are the numbers the
+README's "How fast" table quotes.
+
+| Operation | 100 rows | 1000 rows |
+|---|---:|---:|
+| insert each | 822 ms | 5.7 s |
+| insert per row | 8.2 ms | 5.7 ms |
+| read all | 17 ms | 151 ms |
+| indexed where | 3.7 ms | 4.2 ms |
+| join 1 | 20 ms | 176 ms |
+| join 2 | 25 ms | 177 ms |
+| update 1 by key | 20 ms | 157 ms |
+| update many by index | 5.9 ms | 18 ms |
+| delete 1 by key | 26 ms | 156 ms |
+| insert all in one statement | 56 ms | 432 ms |
+| browser read all | 94 ms | 689 ms |
+| browser indexed where | 9.6 ms | 21 ms |
+| browser join 1 | 88 ms | 732 ms |
+| browser join 2 | 103 ms | 744 ms |
+| pack | 26 ms | 166 ms |
+| browser packed read all | 8.9 ms | 11 ms |
+| browser packed indexed where | 9.7 ms | 11 ms |
+| browser packed join 1 | 20 ms | 20 ms |
+| browser packed join 2 | 32 ms | 33 ms |
+| files on disk | 129 | 1,119 |
+| bytes of data | 39 KB | 359 KB |
