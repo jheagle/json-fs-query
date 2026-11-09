@@ -9,6 +9,7 @@ import { keyDefinition } from '../introspect/definitions/key'
 import { getSetting } from '../utilities/config'
 import { keyIndexFiles } from '../utilities/keyIndexFiles'
 import { removeFile, writeJson } from '../storage'
+import { discardPacked } from '../utilities/packedTable'
 
 /**
  * RESTRICT: reject the whole delete (before removing anything) if any row being deleted is still
@@ -86,7 +87,11 @@ export const deleteEntity = async (entity: string = '', dataSet: Object = {}): P
   await assertNoDependents(entity, primaryKey, toDelete)
   const deletedValues = new Set(toDelete.map(row => computeKeyValue(primaryKey.fields, row)))
 
-  record.entries = await removeMatchingEntries(entity, record, primaryKey, deletedValues)
+  const remaining = await removeMatchingEntries(entity, record, primaryKey, deletedValues)
+  if (remaining.length !== record.entries.length) {
+    await discardPacked(record.path)
+  }
+  record.entries = remaining
   await writeJson(`${record.path}.json`, record)
 
   return dataSet

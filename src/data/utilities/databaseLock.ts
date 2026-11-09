@@ -1,8 +1,16 @@
 import * as jsEnv from 'browser-or-node'
-import { getSetting, resolveDatabasePath, trackDatabaseCall } from './config'
+import { lockPath, resolveDatabasePath, trackDatabaseCall } from './config'
 import { withReadCache } from '../storage'
 
 const queues: Map<string, Promise<void>> = new Map()
+
+let browserCalls = 0
+
+/**
+ * How many calls are running in this browser page right now (they aren't queued there, see withDatabaseLock): `use`
+ * refuses to switch the database while any other call is, as that call would carry on in the other database.
+ */
+export const browserCallsRunning = (): number => browserCalls
 
 /**
  * Run `task` once every earlier task on the same database (the configured databasePath) has finished, so that calls
@@ -22,9 +30,14 @@ const queues: Map<string, Promise<void>> = new Map()
  */
 export const withDatabaseLock = async <T>(task: () => Promise<T>): Promise<T> => {
   if (!jsEnv.isNode) {
-    return withReadCache(task)
+    browserCalls++
+    try {
+      return await withReadCache(task)
+    } finally {
+      browserCalls--
+    }
   }
-  const database = resolveDatabasePath(getSetting('databasePath', 'database/'))
+  const database = resolveDatabasePath(lockPath())
   const ended = trackDatabaseCall()
   const previous = queues.get(database) || Promise.resolve()
   let release: () => void

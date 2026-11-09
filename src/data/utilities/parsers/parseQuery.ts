@@ -14,6 +14,8 @@ import { findOffset, ParsedOffset } from './findOffset'
 import { maskArrays, maskStrings, unmaskStrings } from './maskStrings'
 import { createMatch, parseCreate, ParsedCreate } from './parseCreate'
 import { parseSchemaStatement, schemaStatementMatch } from './parseSchemaStatement'
+import { alterMatch, parseAlter, ParsedAlter } from './parseAlter'
+import { databaseStatementMatch, parseDatabaseStatement } from './parseDatabaseStatement'
 import { splitClauses } from './splitClauses'
 import { startsQueryMatch } from './startsQuery'
 
@@ -62,6 +64,8 @@ export type ParsedQuery = {
   limit: ParsedLimit | undefined
   offset: ParsedOffset | undefined
   create: ParsedCreate | undefined
+  alter?: ParsedAlter
+  ifNotExists?: boolean
   ifExists: boolean | undefined
 }
 
@@ -91,6 +95,11 @@ export const parseQuery = (query: string): ParsedQuery => {
   // No find* step may see inside a string or an array: each one becomes a placeholder holding its value
   query = maskArrays(maskStrings(query))
 
+  // Statements about databases (create / drop database, use, show databases) come first: they share their first words
+  // with the record statements
+  if (databaseStatementMatch.test(query)) {
+    return Object.assign(parsedQuery, parseDatabaseStatement(query))
+  }
   // A create statement has its own shape (a bracketed list of fields and keys), so it gets its own parser
   if (createMatch.test(query)) {
     const { entity, create } = parseCreate(query)
@@ -98,6 +107,11 @@ export const parseQuery = (query: string): ParsedQuery => {
   }
   if (schemaStatementMatch.test(query)) {
     return Object.assign(parsedQuery, parseSchemaStatement(query))
+  }
+  // So does alter: one change to a record's fields
+  if (alterMatch.test(query)) {
+    const { entity, alter } = parseAlter(query)
+    return Object.assign(parsedQuery, { command: 'alter', entity, alter })
   }
 
   // Clauses come at most once each, in a fixed order (see clauseOrder); each step reads only its own clause's body
@@ -124,6 +138,11 @@ export const parseQuery = (query: string): ParsedQuery => {
     if (rest) {
       throw leftoverError(rest, `${keyword} ${body.slice(0, body.length - rest.length).trim()}`)
     }
+  }
+  // `on` joins the record named after the queried one: without it there's nothing to join (this used to fail later,
+  // reading a record with no name, as "Could not read .json")
+  if ((parsedQuery.joinClauses || []).length && !parsedQuery.joinEntity) {
+    throw new Error(`"on" needs the record to join, after the one read: ${parsedQuery.command} ${parsedQuery.entity}.<record> on ...`)
   }
   return parsedQuery
 }

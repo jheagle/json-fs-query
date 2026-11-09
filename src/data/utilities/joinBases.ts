@@ -1,6 +1,6 @@
 import { readEntity } from '../queries/readEntity'
 import { retrieveRecord } from './retrieveRecord'
-import { retrieveFile } from './retrieveFile'
+import { retrieveEntryRows } from './retrieveRecords'
 import { retrieveIndexes } from './retrieveIndexes'
 import { isKeyedType, joinKey } from './joinKey'
 import { RowLookups } from './rowLookup'
@@ -42,16 +42,7 @@ const indexedRows = async (entity: string, property: string, type: string | unde
   }
   // In the record's own order, as a full read gives them
   const record = await retrieveRecord(entity)
-  const rows = []
-  for (const file of record.entries.filter(entry => files.has(entry))) {
-    const data = await retrieveFile(`${record.path}/${file}`)
-      .catch(err => console.error(err))
-    if (!data) {
-      throw new Error(`Could not read entity ${file}`)
-    }
-    rows.push(data)
-  }
-  return rows
+  return retrieveEntryRows(record, record.entries.filter(entry => files.has(entry)))
 }
 
 /**

@@ -330,19 +330,28 @@ describe('query', () => {
     expect(result[0].length).toBeGreaterThan(0)
     expect(result[0].every(row => row.reps === 10)).toBe(true)
   })
-  test('a null literal in a query is stored as a real null in a nullable field, and rejected in any other', async () => {
+  test('a null literal in a query is stored as a real null in a nullable field, left out of an optional one, and rejected in a required one', async () => {
     await create('notes', [
       { name: '_id', type: 'string', optional: false, autoGenerate: true },
       { name: 'text', type: 'string', optional: true, nullable: true },
-      { name: 'count', type: 'int', optional: true }
+      { name: 'count', type: 'int', optional: true },
+      { name: 'kind', type: 'string', optional: true, useDefault: true, defaultValue: 'plain' },
+      { name: 'owner', type: 'string', optional: false, useDefault: true, defaultValue: 'me' }
     ], [
       { type: 'primary', fields: ['_id'], lookup: 'pk__id.json' }
     ])
 
-    const inserted = await query('insert notes values text = null')
-    expect(inserted[0][0].text).toBeNull()
+    const [[nullable]] = await query('insert notes values text = null')
+    expect(nullable.text).toBeNull()
 
-    await expect(query('insert notes values count = null'))
+    // An optional field that isn't nullable can't hold null: null means leaving it out, so its default fills it in
+    const [[optional]] = await query('insert notes values count = null, kind = null')
+    expect(optional).not.toHaveProperty('count')
+    expect(optional.kind).toBe('plain')
+    const [[stored]] = await query(`read notes where _id = '${optional._id}'`)
+    expect(stored).not.toHaveProperty('count')
+
+    await expect(query('insert notes values owner = null'))
       .rejects.toThrow('Value "null" is not allowed: the field is not nullable')
   })
 

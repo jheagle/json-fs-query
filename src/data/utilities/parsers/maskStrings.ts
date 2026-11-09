@@ -47,10 +47,16 @@ export const maskStrings = (query: string): string => {
       }
     }
   }
-  return strings.reduceRight(
-    (masked, { start, end, value }) => `${masked.slice(0, start)}\u0000${toHex(value)}\u0000${masked.slice(end)}`,
-    query
-  )
+  // One pass from the left (the strings come in order, without overlapping): rebuilding the whole query for each string
+  // made a long query (an insert of thousands of rows) take time growing with the square of its length
+  const parts: string[] = []
+  let copied = 0
+  for (const { start, end, value } of strings) {
+    parts.push(query.slice(copied, start), `\u0000${toHex(value)}\u0000`)
+    copied = end
+  }
+  parts.push(query.slice(copied))
+  return parts.join('')
 }
 
 /**

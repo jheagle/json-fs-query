@@ -5,6 +5,8 @@ import { updateEntity } from '../queries/updateEntity'
 import { createRecord } from '../queries/createRecord'
 import { dropRecord } from '../queries/dropRecord'
 import { describeRecord } from '../queries/describeRecord'
+import { alter as alterRecord } from '../introspect/alter'
+import { createDatabase, dropDatabase, showDatabases, useDatabase } from '../queries/databaseStatements'
 import { showRecords } from '../queries/showRecords'
 import { joinEntity } from '../queries/joinEntity'
 import { mergeJoins } from '../queries/mergeJoins'
@@ -21,6 +23,7 @@ import { fieldType } from './fieldType'
 import { conditionsOf } from './conditionTree'
 import { conditionEntities } from './conditionEntities'
 import { requireNode } from './requireNode'
+import { assertKnownFields } from './knownFields'
 
 /**
  * Give each condition and sort clause its field's declared type, so where and sortBy compare by it
@@ -46,7 +49,7 @@ export const runQuery = async (parsed) => {
   // Checked before anything is read: which entity each condition is on, and whether it needs per-pair evaluation
   const perPair = typeof parsed.where !== 'undefined' && conditionEntities(parsed)
   // Writes and schema changes need the filesystem; say so plainly in a browser
-  if (['insert', 'update', 'delete', 'create', 'drop'].includes(parsed.command)) {
+  if (['insert', 'update', 'delete', 'create', 'drop', 'alter'].includes(parsed.command)) {
     requireNode(`"${parsed.command}"`)
   }
   // Schema statements act on the database, not on entries (for create there is no record to read yet)
@@ -57,6 +60,16 @@ export const runQuery = async (parsed) => {
       return { [parsed.entity]: await dropRecord(parsed.entity, parsed.ifExists) }
     case 'describe':
       return { [parsed.entity]: await describeRecord(parsed.entity) }
+    case 'alter':
+      return { [parsed.entity]: await alterRecord(parsed.entity, parsed.alter) }
+    case 'create database':
+      return { [parsed.entity]: await createDatabase(parsed.entity, parsed.ifNotExists) }
+    case 'drop database':
+      return { [parsed.entity]: await dropDatabase(parsed.entity, parsed.ifExists) }
+    case 'use':
+      return { [parsed.entity]: await useDatabase(parsed.entity) }
+    case 'show databases':
+      return { [parsed.entity]: await showDatabases() }
     case 'show':
       return { [parsed.entity]: await showRecords() }
   }
@@ -67,6 +80,8 @@ export const runQuery = async (parsed) => {
     recordData[parsed.joinEntity] = await retrieveRecord(parsed.joinEntity)
   }
 
+  // Every field the query names must be one its record defines: a misspelled one would otherwise match nothing
+  await assertKnownFields(parsed, recordData)
   await typeClauses(parsed, recordData)
 
   let dataSet: any = { [parsed.entity]: [] }
@@ -126,7 +141,7 @@ export const runQuery = async (parsed) => {
   dataSet[parsed.entity] = sortBy(dataSet[parsed.entity], parsed.sortClauses)
   dataSet[parsed.entity] = groupBy(dataSet[parsed.entity], parsed.groupBy)
   dataSet[parsed.entity] = limitOffset(dataSet[parsed.entity], parsed.offset, parsed.limit)
-  dataSet[parsed.entity] = selectFields(dataSet[parsed.entity], parsed.selectClauses, Boolean(parsed.groupBy?.length))
+  dataSet[parsed.entity] = selectFields(dataSet[parsed.entity], parsed.selectClauses, Boolean(parsed.groupBy?.length), parsed.entity)
 
   return dataSet
 }

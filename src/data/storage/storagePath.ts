@@ -1,5 +1,5 @@
 import * as jsEnv from 'browser-or-node'
-import { getSetting } from '../utilities/config'
+import { activeDatabasePath, getSetting } from '../utilities/config'
 
 /**
  * Turn a path inside the database (such as `users.json` or `__indexes/users/name.json`) into the location the files
@@ -12,5 +12,5 @@ import { getSetting } from '../utilities/config'
  */
 export const storagePath = (path: string = ''): string => {
   const relativePath = jsEnv.isBrowser ? getSetting('relativePath', '') : ''
-  return `${relativePath}${getSetting('databasePath', 'database/')}${path}`
+  return `${relativePath}${activeDatabasePath()}${path}`
 }

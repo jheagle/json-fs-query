@@ -1,7 +1,7 @@
 export { query } from './data/queries/query'
 export { quote } from './data/queries/quote'
 export { queryStatus, QueryStatus } from './data/queries/queryStatus'
-export { create, drop, describe } from './data/introspect'
+export { create, drop, alter, describe, formatDatabase, packDatabase, checkPacked } from './data/introspect'
 export { configure } from './data/utilities/config'
 export {
   fieldProperties,

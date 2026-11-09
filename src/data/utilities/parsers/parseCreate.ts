@@ -19,10 +19,10 @@ export type ParsedCreateQuery = {
 export const createMatch: RegExp = /^\s*create(?![a-z0-9_-])/i
 
 const headMatch: RegExp = /^\s*create\s+(if\s+not\s+exists\s+)?([a-z0-9_-]+)\s*\(/i
-const nameSource = '[a-z0-9_-]+'
-const nameMatch: RegExp = new RegExp(`^${nameSource}$`, 'i')
+export const nameSource = '[a-z0-9_-]+'
+export const nameMatch: RegExp = new RegExp(`^${nameSource}$`, 'i')
 const numberMatch: RegExp = new RegExp(`^${numberSource}$`, 'i')
-const fieldMatch: RegExp = new RegExp(`^(${nameSource})\\s+(${nameSource})((?:\\s[\\s\\S]*)?)$`, 'i')
+export const fieldMatch: RegExp = new RegExp(`^(${nameSource})\\s+(${nameSource})((?:\\s[\\s\\S]*)?)$`, 'i')
 const primaryMatch: RegExp = /^primary\s+key\s*\(([^()]*)\)$/i
 const uniqueMatch: RegExp = /^unique\s*\(([^()]*)\)$/i
 const indexMatch: RegExp = /^index\s*\(([^()]*)\)$/i
@@ -31,6 +31,13 @@ const stringLiteral: RegExp = new RegExp(`^${placeholderSource}$`)
 const arrayLiteral: RegExp = new RegExp(`^${arraySource}$`)
 
 const lookupPrefix = { primary: 'pk', unique: 'unique', index: 'index', foreign: 'fk' }
+
+/**
+ * The index file name a key's index lives in, from its type and fields (as create names it).
+ * @param type
+ * @param fields
+ */
+export const keyLookup = (type: string, fields: string[]): string => `${lookupPrefix[type]}_${fields.join('_')}.json`
 
 /**
  * Show a piece of the (masked) query the way it was written, for an error message.
@@ -131,7 +138,7 @@ const parseDefault = (token: string | undefined): any => {
  * One field: `<name> <type> [optional] [null | not null] [auto] [default <value>]`, the modifiers in any order.
  * @param found - The field's fieldMatch match.
  */
-const parseField = (found: RegExpMatchArray): fieldProperties => {
+export const parseField = (found: RegExpMatchArray): fieldProperties => {
   const [item, name, typeName, rest] = found
   const type = typeName.toLowerCase()
   if (!fieldTypes.includes(type)) {
@@ -228,7 +235,7 @@ const finishKeys = (definition: fieldProperties[], keys: keyProperties[]): keyPr
     if (missing) {
       throw new Error(`The ${key.type} key (${key.fields.join(', ')}) names "${missing}", which is not a field`)
     }
-    const lookup = `${lookupPrefix[key.type]}_${key.fields.join('_')}.json`
+    const lookup = keyLookup(key.type, key.fields)
     if (lookups.has(lookup)) {
       throw new Error(`The same ${key.type} key on "${key.fields.join(', ')}" is given twice`)
     }

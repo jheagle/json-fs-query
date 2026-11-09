@@ -15,7 +15,8 @@
  *
  * and times, in order: inserting every child one query at a time; reading every child; an indexed `where`; a one-join
  * and a two-join read; updating one row by key and many rows by index; deleting one row. The browser reads the same
- * database over fetch() from a local server. Prints a markdown table.
+ * database over fetch() from a local server, then again after packDatabase() (one file per record). Prints a markdown
+ * table.
  */
 const fs = require('node:fs')
 const os = require('node:os')
@@ -31,7 +32,17 @@ const sizes = option('--sizes', '100,1000').split(',').map(Number)
 const label = option('--label', 'run')
 const browserToo = !args.includes('--no-browser')
 
-const { configure, query } = require(path.join(rootDir, 'dist/index.js'))
+const { configure, query, packDatabase } = require(path.join(rootDir, 'dist/index.js'))
+
+/** Whether this build reads `insert ... values (...), (...)` (earlier builds don't), so older builds can still run. */
+const supportsMultiRowInsert = (() => {
+  try {
+    const { parser } = require(path.join(rootDir, 'dist/data/queries/parser.js'))
+    return parser('insert t values (a = 1), (a = 2)')[0].insertValues.length === 2
+  } catch (error) {
+    return false
+  }
+})()
 
 const kindCount = 10
 const days = 60
@@ -62,11 +73,37 @@ const buildDatabase = async (databasePath, size) => {
   }
   const insertChildren = await time(async () => {
     for (let child = 0; child < size; child++) {
-      const day = `2026-${String(1 + Math.floor((child % days) / 28)).padStart(2, '0')}-${String(1 + (child % 28)).padStart(2, '0')}`
-      await query(`insert children values parent_id = 'p${child % parentCount}', day = '${day}', value = ${child}, label = 'row ${child}'`)
+      await query(`insert children values ${childValues(child, parentCount)}`)
     }
   })
   return { insertChildren, parentCount }
+}
+
+/** One child row's values, the same in every insert the benchmark times. */
+const childValues = (child, parentCount) => {
+  const day = `2026-${String(1 + Math.floor((child % days) / 28)).padStart(2, '0')}-${String(1 + (child % 28)).padStart(2, '0')}`
+  return `parent_id = 'p${child % parentCount}', day = '${day}', value = ${child}, label = 'row ${child}'`
+}
+
+/**
+ * Time inserting every child in one statement (`values (...), (...)`), as an import would, into a database of its own
+ * built the same way, so the other rows keep timing the same database as in earlier runs.
+ * @param {string} databasePath
+ * @param {number} size
+ */
+const insertAllAtOnce = async (databasePath, size) => {
+  configure({ databasePath })
+  await query(`create kinds (_id string, name string, primary key (_id));
+    create parents (_id string, name string, kind_id string, primary key (_id),
+      foreign key (kind_id) references kinds (_id));
+    create children (_id string auto, parent_id string, day string, value int, label string null,
+      primary key (_id), index (day), foreign key (parent_id) references parents (_id))`)
+  const parentCount = Math.max(1, Math.round(size / 10))
+  await query(`insert kinds values ${Array.from({ length: kindCount }, (_, kind) => `(_id = 'k${kind}', name = 'Kind ${kind}')`).join(', ')}`)
+  await query(`insert parents values ${Array.from({ length: parentCount }, (_, parent) =>
+    `(_id = 'p${parent}', name = 'Parent ${parent}', kind_id = 'k${parent % kindCount}')`).join(', ')}`)
+  const text = `insert children values ${Array.from({ length: size }, (_, child) => `(${childValues(child, parentCount)})`).join(', ')}`
+  return time(() => query(text))
 }
 
 /** The read queries timed in both Node and the browser. */
@@ -158,10 +195,23 @@ const main = async () => {
         await query(`delete children where _id = '${row._id}'`)
       })
       Object.assign(result, folderSize(databasePath))
+      if (supportsMultiRowInsert) {
+        process.stderr.write(' insert in one statement...')
+        result['insert all in one statement'] = await insertAllAtOnce(path.join(scratch, 'bulk') + '/', size)
+        configure({ databasePath })
+      }
       if (browserToo) {
         process.stderr.write(' browser...')
         const browser = await browserReads(databasePath)
         if (browser) for (const [name, ms] of Object.entries(browser)) result[`browser ${name}`] = ms
+        if (browser && packDatabase) {
+          // The same reads once every record is packed into one file (counted in files and bytes above without them)
+          process.stderr.write(' packing...')
+          result.pack = await time(() => packDatabase())
+          process.stderr.write(' browser packed...')
+          const packed = await browserReads(databasePath)
+          if (packed) for (const [name, ms] of Object.entries(packed)) result[`browser packed ${name}`] = ms
+        }
       }
       rows.push(result)
       process.stderr.write(' done\n')

@@ -280,9 +280,18 @@ describe('insertEntity', () => {
       expect(entryFile).toHaveProperty('note', null)
     })
 
-    test('rejects null in a field that is not nullable, instead of storing it as 0 or "null"', async () => {
+    test('a null in an optional field that is not nullable is left out, never stored as null, 0 or "null"', async () => {
       await create('foo', nullableDefinition, keys)
-      await expect(insertEntity('foo', [{ reps: null }], {}))
+      const dataSet = await insertEntity('foo', [{ reps: null }], {})
+      const inserted = dataSet.foo[0]
+      expect(inserted).not.toHaveProperty('reps')
+      const entryFile = JSON.parse(await readFile(`${databasePath}foo/${inserted._id}.json`, 'utf8'))
+      expect(entryFile).not.toHaveProperty('reps')
+    })
+
+    test('rejects null in a required field that is not nullable', async () => {
+      await create('foo', [...nullableDefinition, { name: 'sets', type: 'int', optional: false }], keys)
+      await expect(insertEntity('foo', [{ sets: null }], {}))
         .rejects.toThrow('Value "null" is not allowed: the field is not nullable')
       const recordFile = JSON.parse(await readFile(`${databasePath}foo.json`, 'utf8'))
       expect(recordFile.entries).toEqual([])

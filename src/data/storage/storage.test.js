@@ -17,9 +17,21 @@ describe('storage', () => {
     expect(storagePath()).toBe('storage-database/')
   })
 
-  test('writeJson writes indented JSON that readJson reads back', async () => {
+  test('writeJson writes compact JSON by default, which readJson reads back', async () => {
     const content = { path: 'users', entries: ['1.json'] }
     await writeJson('users.json', content)
+    expect(fs.readFileSync(`${databasePath}users.json`, 'utf8')).toBe('{"path":"users","entries":["1.json"]}')
+    expect(await readJson('users.json')).toEqual(content)
+  })
+
+  test('writeJson writes JSON indented by 2 spaces with format pretty, which readJson reads back', async () => {
+    const content = { path: 'users', entries: ['1.json'] }
+    configure({ format: 'pretty' })
+    try {
+      await writeJson('users.json', content)
+    } finally {
+      configure({ format: 'compact' })
+    }
     expect(fs.readFileSync(`${databasePath}users.json`, 'utf8')).toBe(JSON.stringify(content, null, 2))
     expect(await readJson('users.json')).toEqual(content)
   })

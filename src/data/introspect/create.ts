@@ -33,7 +33,7 @@ const assertKnownKeyProperties = (recordName: string, keys: keyProperties[]): vo
  * @param recordName
  * @param recordContent
  */
-const assertValidDefinition = (recordName: string, recordContent: recordDefinition): void => {
+export const assertValidDefinition = (recordName: string, recordContent: recordDefinition): void => {
   for (const field of recordContent.definition) {
     if (!Object.prototype.hasOwnProperty.call(field, 'default')) {
       continue

@@ -15,6 +15,8 @@ import { keyDefinition } from '../introspect/definitions/key'
 import { getSetting } from '../utilities/config'
 import { keyIndexFiles } from '../utilities/keyIndexFiles'
 import { writeJson } from '../storage'
+import { discardPacked } from '../utilities/packedTable'
+import { assertFieldsDefined } from '../utilities/knownFields'
 
 /**
  * Same reasoning as deleteEntity: a record object carries no memory of which entry file it came
@@ -71,7 +73,8 @@ const assertUniqueForUpdate = async (entity: string, record: recordDefinition, o
       continue
     }
     const checkKeys = key.fields.map(field => newData[field])
-    if (checkKeys.some(value => value === null)) {
+    // A null, or a field the row doesn't have (left out, or removed by this update), is never a duplicate
+    if (checkKeys.some(value => value === null || typeof value === 'undefined')) {
       continue
     }
     const isUnique = await keyUnique(entity, key.fields, checkKeys)
@@ -97,7 +100,9 @@ const assertForeignKeysForUpdate = async (entity: string, record: recordDefiniti
       continue
     }
     const field = key.fields[0]
-    if (!Object.prototype.hasOwnProperty.call(newValues, field) || newValues[field] === null || sameValue(fieldType(record, field), newValues[field], oldData[field])) {
+    // A null, or a field the update removes (undefined), references nothing
+    if (!Object.prototype.hasOwnProperty.call(newValues, field) || newValues[field] === null || typeof newValues[field] === 'undefined' ||
+      sameValue(fieldType(record, field), newValues[field], oldData[field])) {
       continue
     }
     const { entity: refEntity, property: refProperty } = splitEntityProperty(key.references[0].fields[0])
@@ -164,7 +169,7 @@ const assertUniqueWithinUpdate = (entity: string, record: recordDefinition, plan
     }
     const claimed = []
     for (const { oldData, newData } of planned) {
-      if (!keyFieldsChanged(record, key, oldData, newValues) || key.fields.some(field => newData[field] === null)) {
+      if (!keyFieldsChanged(record, key, oldData, newValues) || key.fields.some(field => newData[field] === null || typeof newData[field] === 'undefined')) {
         continue
       }
       const value = computeKeyValue(key.fields, newData)
@@ -189,6 +194,11 @@ const assertRequiredFields = (entity: string, record: recordDefinition, newData:
  * of the merged record - a field whose already-stored value doesn't match its declared type
  * (nothing enforced this before typeCheck() existed) must not block an update that never touches
  * that field.
+ *
+ * A null for an optional field that isn't nullable means the field is removed from the row (the
+ * field can't hold null, so this is the only thing it can mean, and the only way to clear one):
+ * it's kept as undefined here, so the key checks and indexes see the field change, and removed from
+ * the row that's written (see withoutRemoved).
  * @param record
  * @param values
  */
@@ -196,10 +206,27 @@ const applyFieldTypes = (record: recordDefinition, values: Object): Object => {
   const typedValues = Object.assign({}, values)
   for (const field of record.definition) {
     if (Object.prototype.hasOwnProperty.call(typedValues, field.name)) {
-      typedValues[field.name] = typeCheck(field.type, typedValues[field.name], field.nullable)
+      typedValues[field.name] = typedValues[field.name] === null && field.optional && !field.nullable
+        ? undefined
+        : typeCheck(field.type, typedValues[field.name], field.nullable)
     }
   }
   return typedValues
+}
+
+/**
+ * A row without the fields an update removes (those it set to undefined, see applyFieldTypes).
+ * @param row
+ * @param typedValues
+ */
+const withoutRemoved = (row: Object, typedValues: Object): Object => {
+  const kept = Object.assign({}, row)
+  for (const field of Object.keys(typedValues)) {
+    if (typeof typedValues[field] === 'undefined') {
+      delete kept[field]
+    }
+  }
+  return kept
 }
 
 export const updateEntity = async (entity: string = '', values: Object = {}, dataSet: Object = {}): Promise<Object> => {
@@ -208,7 +235,15 @@ export const updateEntity = async (entity: string = '', values: Object = {}, dat
   if (!primaryKey) {
     throw new Error(`Cannot update "${entity}" without a primary key`)
   }
+  // A field the record doesn't define would otherwise be stored outside its definition
+  assertFieldsDefined(entity, record, Object.keys(values || {}), 'set')
   const typedValues = applyFieldTypes(record, values)
+  // A row is found by its primary key, so none of its fields can be cleared (an optional one could be, by null)
+  for (const field of primaryKey.fields) {
+    if (Object.prototype.hasOwnProperty.call(typedValues, field) && typeof typedValues[field] === 'undefined') {
+      throw new Error(`Cannot clear "${field}" on ${entity}: it's part of the primary key`)
+    }
+  }
 
   // Check every row first and write only once all of them pass, so a row that fails leaves the others unchanged too
   const planned = []
@@ -222,7 +257,7 @@ export const updateEntity = async (entity: string = '', values: Object = {}, dat
       continue
     }
     const oldData = await retrieveFile(`${record.path}/${fileName}`)
-    const newData = Object.assign({}, oldData, typedValues)
+    const newData = withoutRemoved(Object.assign({}, oldData, typedValues), typedValues)
     await assertUniqueForUpdate(entity, record, oldData, newData, typedValues)
     await assertForeignKeysForUpdate(entity, record, oldData, typedValues)
     await assertNoDependentsForUpdate(entity, record, primaryKey, oldData, typedValues)
@@ -230,6 +265,9 @@ export const updateEntity = async (entity: string = '', values: Object = {}, dat
     planned.push({ fileName, oldData, newData })
   }
   assertUniqueWithinUpdate(entity, record, planned, typedValues)
+  if (planned.length) {
+    await discardPacked(record.path)
+  }
 
   for (const { fileName, oldData, newData } of planned) {
     await reconcileIndexes(record, oldData, newData, typedValues, fileName)
