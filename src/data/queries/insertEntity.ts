@@ -296,7 +296,7 @@ const generateKey = async (statement: InsertStatement, field: string): Promise<s
 
 /**
  * Build one entity's stored values from the raw input values, generating any autoGenerate
- * fields and applying field defaults, then throw if a required field still has no value. A null
+ * field the row leaves out (a value given for one is kept) and applying field defaults, then throw if a required field still has no value. A null
  * in an optional field that isn't nullable means the same as leaving it out (the field can't
  * hold null, so nothing is lost): it isn't stored, and a default fills it in as for a field left out.
  * @param statement
@@ -310,7 +310,11 @@ const buildEntityValues = async (statement: InsertStatement, rowValues: Object =
       value = undefined
     }
     if (field.autoGenerate) {
-      value = await generateKey(statement, field.name)
+      // As MySQL does with AUTO_INCREMENT, a value given for the field is kept (the key checks still apply), and only
+      // a row that leaves it out, or gives null, gets a new one
+      if (value === undefined || value === null) {
+        value = await generateKey(statement, field.name)
+      }
     } else if (Object.prototype.hasOwnProperty.call(field, 'default')) {
       value = useDefault(field['default'], value)
     }
