@@ -1,5 +1,5 @@
 import * as jsEnv from 'browser-or-node'
-import { databasesFolder, getSetting } from '../utilities/config'
+import { configuredFetch, databasesFolder, getSetting } from '../utilities/config'
 import { nodeFiles } from './nodeFiles'
 import { cacheRemove } from './readCache'
 import { writeAtomically } from './writeSet'
@@ -25,7 +25,7 @@ export const readDatabaseList = async (): Promise<string[]> => {
   try {
     text = jsEnv.isNode
       ? await nodeFiles().readFile(listLocation(), 'utf8')
-      : await fetch(listLocation()).then(response => response.ok === false ? '[]' : response.text())
+      : await configuredFetch(listLocation()).then(response => response.ok === false ? '[]' : response.text())
   } catch (error) {
     if (jsEnv.isNode && (error as { code?: string })?.code !== 'ENOENT') {
       throw error
