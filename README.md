@@ -137,7 +137,7 @@ that aren't nullable reject it.
 
 `useDefault: true, defaultValue: …` fills in a field that is left out. `create()` checks the default against the
 field's type (a `null` default needs `nullable: true`) and throws if it doesn't fit. Primary key fields can't be
-nullable. Each key needs a non-empty `fields` list naming defined fields, and unknown key properties are rejected.
+nullable, or optional unless they're `auto` (a row has to have its key: its file is named by it). Each key needs a non-empty `fields` list naming defined fields, and unknown key properties are rejected.
 As in SQL, a `null` is never a duplicate in a unique key (any number of rows can hold it), and
 a `null` foreign key isn't checked against the record it references.
 

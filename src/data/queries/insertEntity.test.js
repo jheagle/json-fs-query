@@ -186,7 +186,8 @@ describe('insertEntity', () => {
       const compositePrimaryKeys = [
         { type: 'primary', fields: ['a', 'b'], lookup: 'pk_a_b.json' }
       ]
-      await create('foo', multiDefinition, compositePrimaryKeys)
+      // Every field of a primary key is required (create() refuses an optional one)
+      await create('foo', multiDefinition.map(field => ({ ...field, optional: false })), compositePrimaryKeys)
       const inserted = await insertEntity('foo', [{ a: 'x', b: 'y' }], {})
       expect(inserted.foo[0].a).toBe('x')
       expect(inserted.foo[0].b).toBe('y')

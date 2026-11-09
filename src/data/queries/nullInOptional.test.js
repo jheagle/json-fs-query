@@ -68,8 +68,13 @@ describe('null in an optional field that is not nullable', () => {
     expect(parents).toEqual([])
   })
 
-  test('a field of the primary key can never be cleared, even an optional one', async () => {
-    await query('create keyed (k string optional, v string, primary key (k))')
+  test('a field of the primary key can never be cleared, even an optional one (from a database made before create() refused those)', async () => {
+    await query('create keyed (k string, v string, primary key (k))')
+    // create() now refuses an optional primary key field, so make the record as an older version could have
+    const recordFile = `${databasePath}keyed.json`
+    const record = JSON.parse(fs.readFileSync(recordFile, 'utf8'))
+    record.definition.find(field => field.name === 'k').optional = true
+    fs.writeFileSync(recordFile, JSON.stringify(record))
     await query("insert keyed values (k = 'a', v = 'x')")
     await expect(query("update keyed set k = null where k = 'a'")).rejects.toThrow('Cannot clear "k" on keyed: it\'s part of the primary key')
     const [[row]] = await query("read keyed where k = 'a'")

@@ -242,4 +242,12 @@ describe('alter', () => {
     await fill()
     await expect(query(text)).rejects.toThrow(message)
   })
+
+  test('a primary key field can\'t be made optional (nor created optional through the query form), and nothing changes', async () => {
+    await fill()
+    const before = snapshot()
+    await expect(query('alter items modify _id string optional')).rejects.toThrow('Primary key field "_id" of items can\'t be optional')
+    expect(snapshot()).toEqual(before)
+    await expect(query('create loose (_id string optional, primary key (_id))')).rejects.toThrow('Primary key field "_id" of loose can\'t be optional')
+  })
 })

@@ -56,8 +56,13 @@ export const assertValidDefinition = (recordName: string, recordContent: recordD
   }
   const primaryKey = recordContent.keys.find(key => key.type === 'primary')
   for (const fieldName of primaryKey ? primaryKey.fields : []) {
-    if (recordContent.definition.some(field => field.name === fieldName && field.nullable)) {
+    const field = recordContent.definition.find(defined => defined.name === fieldName)
+    if (field && field.nullable) {
       throw new Error(`Primary key field "${fieldName}" of ${recordName} can't be nullable`)
+    }
+    // A row without its primary key can't be stored (its file is named by it): an auto field always gets a value
+    if (field && field.optional && !field.autoGenerate) {
+      throw new Error(`Primary key field "${fieldName}" of ${recordName} can't be optional`)
     }
   }
 }

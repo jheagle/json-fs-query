@@ -101,6 +101,19 @@ describe('create', () => {
       ], primary)).rejects.toThrow('Primary key field "_id" of foo can\'t be nullable')
     })
 
+    test('rejects an optional primary key field (a row without it would be stored as undefined.json), unless it is auto', async () => {
+      await expect(create('foo', [
+        { name: '_id', type: 'string', optional: true }
+      ], primary)).rejects.toThrow('Primary key field "_id" of foo can\'t be optional')
+      await expect(create('bar', [
+        { name: 'a', type: 'string' },
+        { name: 'b', type: 'string', optional: true }
+      ], [{ type: 'primary', fields: ['a', 'b'] }])).rejects.toThrow('Primary key field "b" of bar can\'t be optional')
+      await expect(create('baz', [
+        { name: '_id', type: 'string', optional: true, autoGenerate: true }
+      ], primary)).resolves.not.toBeNull()
+    })
+
     describe('invalid keys', () => {
       const definition = [{ name: '_id', type: 'string' }]
       const expectNothingWritten = () => {
