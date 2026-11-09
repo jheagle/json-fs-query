@@ -457,7 +457,7 @@ A field is `<name> <type>`, then any of these, in any order:
 |---|---|
 | `optional` | may be left out (see "Fields" above) |
 | `null` / `not null` | may hold `null` / may not (the default) |
-| `auto` | a UUID is generated on insert; the type must be `string` |
+| `auto` | a UUID is generated on insert for a row that leaves the field out (or gives `null`); a value given for it is kept, as MySQL keeps an explicit `AUTO_INCREMENT` value, and still has to be unique when the field is a key. The type must be `string` |
 | `default <value>` | used when the field is left out: a string, a number, an array, `null`, `true` or `false` (so an `object` field can only default to `null` here; `create()` takes any default) |
 
 The types are `string`, `int`, `boolean`, `object` and `array`; any other is an error.
@@ -590,6 +590,12 @@ Queries that worked in 2.x can be errors now (each error names the problem), and
 - A record that doesn't exist is `Record "<name>" doesn't exist` (in a browser, `... doesn't exist, or <name>.json
   can't be read`), as `drop` and `describe` already said, instead of `Could not read <name>.json`. A join written
   without the record to join (`read workouts on ...`) says so, instead of `Could not read .json`.
+
+### Upgrading from 3.3
+
+- An `auto` field keeps a value given for it on insert. Before 3.3.1, `insert foo values _id = 'mine', ...` stored the row
+  under a new UUID without a word, so copying rows with their ids (or migrating data whose other records point at those
+  ids) lost them. A row that leaves the field out, or gives `null`, still gets a new UUID.
 
 ## Configuration
 
