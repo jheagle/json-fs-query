@@ -1,14 +1,93 @@
 # json-fs-query
 
-Read and manage data with JSON files - a small query engine that treats a folder of JSON files as a database, with
-a SQL-like query string (`read workouts where date = '2024-06-02'`) instead of a query builder API.
+A git-native JSON data store for static sites. Your data lives in a folder of plain JSON files, committed with the
+rest of the site: readable, diffable and reviewed in pull requests like code. json-fs-query adds what a folder of
+files doesn't have on its own:
 
-The core engine (schema management, a full read/insert/update/delete query language, single- and multi-field key
-support, and referential integrity) is implemented and tested. Still open, tracked for whenever they're actually
-needed: multi-field *foreign* keys specifically (single-field ones work; composite primary/unique/index keys work
-too), and CASCADE/SET NULL modes for referential integrity (deleting/updating a referenced record is RESTRICTed -
-blocked outright - rather than cascading or nulling out the dependents; see `configure()` below to turn that
-enforcement off entirely if it doesn't fit your workflow).
+- **A schema**: field types, required and nullable fields, defaults.
+- **Keys enforced**: primary, unique and foreign keys, checked on every write (a delete that would leave a dangling
+  reference is refused).
+- **A SQL-like query language**: `read workouts where date = '2024-06-02' sort reps desc`, with joins, `group by`,
+  `alter`, multi-row inserts, and statements that change nothing if any row fails.
+- **Reads straight from static hosting**: in a browser it reads the files over `fetch()` (GitHub Pages, Netlify, any
+  CDN), so a site can query its data with no database server. Writes run in Node: a script or a build step.
+
+## When to use it, and when not to
+
+It suits data that's written by you (or your build) and read by your visitors: a portfolio's projects, a blog's
+posts, a quiz bank, a workout log, a small catalogue. Small to medium size: hundreds to about ten thousand rows a
+record. Data you want to see change in `git diff`, and ship without running anything server-side.
+
+Use SQLite, or a real database server, instead when:
+
+- **Visitors write data.** Writes need file system access, so a browser can only read. Something has to run a server
+  to accept writes.
+- **Several programs write at once.** Calls are queued within one Node process; two processes writing one folder
+  aren't protected from each other.
+- **The data is big.** Each row is a file, and a read loads the rows it needs into memory. The benchmarks go up to
+  10,000 rows; once the files stop being something you'd read in a diff, SQLite will be faster and smaller.
+- **You need what isn't here yet**: transactions across several statements, aggregates (`count`, `sum`), outer joins,
+  date and decimal field types, multi-field foreign keys, and `cascade` / `set null` on delete (a referenced row can't
+  be deleted while rows point at it, or checks can be turned off with `configure()`). These are planned, not built.
+
+## How fast
+
+At 1,000 rows (a table of 100 parents and one of 1,000 children with a foreign key and an index), before the
+performance work (3.1.4) and now. `BENCHMARKS.md` has every run and what each one measures.
+
+| Operation, 1,000 rows | 3.1.4 | Now |
+|---|---:|---:|
+| Insert 1,000 rows, one `insert` each | 6.5 min | 5.7 s |
+| Insert 1,000 rows in one `insert` | - | 0.43 s |
+| Read every row | 376 ms | 151 ms |
+| Indexed `where` | 7.8 ms | 4.2 ms |
+| One join | 5.2 s | 176 ms |
+| Two joins | 5.6 s | 177 ms |
+| Update one row by key | 402 ms | 157 ms |
+| Delete one row by key | 784 ms | 156 ms |
+| Browser: read every row | 4.3 s | 689 ms, packed 11 ms |
+| Browser: one join | 15.2 s | 732 ms, packed 20 ms |
+| Browser: two joins | 26.1 s | 744 ms, packed 33 ms |
+| Size of the data | 438 KB | 359 KB |
+
+The browser rows are read from a local server; over a real network each request costs more, which is what packed
+tables (see In the browser) are for: one request per record instead of one per row.
+
+## A static site, end to end
+
+A Node script owns the data: it creates the records once and adds rows whenever there are new ones.
+
+```js
+// scripts/add-posts.js
+const { configure, query, packDatabase } = require('json-fs-query')
+
+configure({ databasePath: 'site/database/' })
+
+await query(`create if not exists authors (_id string auto, name string, primary key (_id));
+  create if not exists posts (_id string auto, author_id string, title string, published string,
+    primary key (_id), index (published), foreign key (author_id) references authors (_id))`)
+
+const [[author]] = await query("insert authors values name = 'Joshua'")
+await query(`insert posts values
+  (author_id = '${author._id}', title = 'First post', published = '2026-11-01'),
+  (author_id = '${author._id}', title = 'Second post', published = '2026-11-08')`)
+
+await packDatabase()   // one file per record, for the browser
+```
+
+Commit `site/database/` and deploy `site/` as usual. The page reads it with no server of its own:
+
+```html
+<script src="https://unpkg.com/json-fs-query"></script>
+<script>
+  jsonFsQuery.configure({ databasePath: 'database/' })
+  jsonFsQuery.query("read posts merge posts.author_id with authors._id sort published desc limit 10")
+    .then(([posts]) => console.log(posts))   // each post with its author's name as "authors.name"
+</script>
+```
+
+New posts go in the same way (an `insert`, or a JSON file edited by hand), then `packDatabase()`, commit and deploy. A
+test that calls `checkPacked()` (see Packed tables) catches a forgotten `packDatabase()`.
 
 ## Install
 
@@ -661,10 +740,11 @@ The reference for every function is in [`docs/`](https://joshuaheagle.com/projec
 | --- | --- |
 | `introspect` | Create, drop and describe a JSON-file "table" (and the policies that validate one) |
 | `queries` | Parse a query string and run it - reads, inserts, updates, deletes, joins, `where`, `sortBy`, `groupBy` |
+| `storage` | Every file read, write, delete and listing (disk in Node, `fetch()` in a browser), the per-call cache and write set |
 | `utilities` | Shared helpers the queries use - retrieving records/files/indexes and merging join results |
 
 `src/index.ts` is the package's public entry point - it re-exports `query`, `quote`, `queryStatus`, `create`, `drop`,
-`describe`, `configure`, and the schema-definition types (`fieldProperties`, `keyProperties`, etc.) needed to build a `create()` call. Everything else
+`alter`, `describe`, `formatDatabase`, `packDatabase`, `checkPacked`, `configure`, and the schema-definition types (`fieldProperties`, `keyProperties`, etc.) needed to build a `create()` call. Everything else
 under `src/data/` is an internal module, reachable but not part of the supported public API.
 
 ## Development
