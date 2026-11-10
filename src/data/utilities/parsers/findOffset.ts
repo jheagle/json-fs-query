@@ -1,20 +1,20 @@
-import { removeFromQuery } from './removeFromQuery'
 import { ParsedQuery } from './parseQuery'
 
-const offsetMatch: RegExp = /offset\s*(\d+)/i
+const offsetMatch: RegExp = /^(\d+)/
 
 export type ParsedOffset = number
 
 /**
- * Extract the offset clauses from the query.
+ * Read a offset clause body (a whole number, see splitClauses).
  * @param parsed
- * @param query
+ * @param body
+ * @returns The rest of the body, after the number.
  */
-export const findOffset = (parsed: ParsedQuery, query: string): string => {
-  const offsetFound: RegExpMatchArray = query.match(offsetMatch)
+export const findOffset = (parsed: ParsedQuery, body: string): string => {
+  const offsetFound: RegExpMatchArray = body.match(offsetMatch)
   if (offsetFound) {
     parsed['offset'] = offsetFound ? parseInt(offsetFound[1]) : undefined
-    return removeFromQuery(offsetFound[0], query)
+    return body.slice(offsetFound[0].length).trim()
   }
-  return query
+  return body
 }

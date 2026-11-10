@@ -1,1 +1,0 @@
-export const removeFromQuery = (substring: string, query: string): string => query.replace(substring, '').trim()

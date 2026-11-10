@@ -7,17 +7,18 @@
   "copyFiles": [
     {
       "from": "browser/*.js",
-      "to": "../joshuaheagle.local/projects/json-file-db/browser"
+      "to": "../joshuaheagle.local/projects/json-fs-query/browser"
     }
   ],
   "dist": {
     "main": "dist/index.js"
   },
   "docs": {
+    "bodyHtml": "<script data-goatcounter=\"https://joshuaheagle.goatcounter.com/count\" async src=\"//gc.zgo.at/count.js\"></script>",
     "enabled": true,
     "from": "src/data",
     "index": "MAIN.md",
-    "to": "../joshuaheagle.local/projects/json-file-db/docs",
+    "to": "../joshuaheagle.local/projects/json-fs-query/docs",
     "inBuild": false,
     "gitRevision": "main"
   },

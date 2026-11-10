@@ -230,7 +230,7 @@ describe('parser', () => {
         joinClauses: [],
         mergeJoins: [],
         sortClauses: [],
-        groupBy: 'date',
+        groupBy: ['date'],
         limit: undefined,
         offset: undefined,
       }
@@ -371,14 +371,14 @@ describe('parser', () => {
   })
 
   test('reports which query failed, with the reason', () => {
-    expect(() => parser('read workouts; read exercises sort')).toThrow('Failed to interpret query 2 of 2: read exercises sort (Unrecognized query value:')
+    expect(() => parser('read workouts; read exercises sort')).toThrow('Failed to interpret query 2 of 2: read exercises sort (Missing a field after sort)')
   })
 
   describe('strings', () => {
     const only = (queries) => parser(queries)[0]
 
-    test('reads each string of a two-condition where on its own (main read one condition: x\' and where b = \'y)', () => {
-      expect(conditionsOf(only("read t where a = 'x' and where b = 'y'").where).map(({ value }) => value)).toEqual(['x', 'y'])
+    test('reads each string of a two-condition where on its own (main read one condition: x\' and b = \'y)', () => {
+      expect(conditionsOf(only("read t where a = 'x' and b = 'y'").where).map(({ value }) => value)).toEqual(['x', 'y'])
     })
 
     test('lets a string hold the other quote', () => {
@@ -409,7 +409,7 @@ describe('parser', () => {
     })
 
     test('shows a stray string as it was written in the error', () => {
-      expect(() => parser("read t where a = 'x' 'stray'")).toThrow("(Unrecognized query value: 'stray')")
+      expect(() => parser("read t where a = 'x' 'stray'")).toThrow("(Unexpected \"'stray'\" after \"where a = 'x'\")")
     })
   })
 
@@ -417,7 +417,7 @@ describe('parser', () => {
     const only = (queries) => parser(queries)[0]
 
     test('reads two array conditions as two arrays (each used to run to the last ])', () => {
-      expect(conditionsOf(only('read t where a in [1,2] and where b in [3]').where).map(({ value }) => value)).toEqual([[1, 2], [3]])
+      expect(conditionsOf(only('read t where a in [1,2] and b in [3]').where).map(({ value }) => value)).toEqual([[1, 2], [3]])
     })
 
     test('reads nested arrays in insert and update (each used to stop at the first ])', () => {
@@ -448,8 +448,8 @@ describe('parser', () => {
       expect(read.limit).toBe(1)
     })
 
-    test('several fields, separated by commas, before offset and limit', () => {
-      const read = only('read t sort a, b desc, c offset 2 limit 3')
+    test('several fields, separated by commas, before limit and offset', () => {
+      const read = only('read t sort a, b desc, c limit 3 offset 2')
       expect(read.sortClauses).toEqual([
         { property: 'a', direction: 'asc' },
         { property: 'b', direction: 'desc' },
@@ -459,8 +459,8 @@ describe('parser', () => {
       expect(read.limit).toBe(3)
     })
 
-    test('before group by', () => {
-      const read = only('read t sort a group by b')
+    test('after group by', () => {
+      const read = only('read t group by b sort a')
       expect(read.sortClauses).toEqual([{ property: 'a', direction: 'asc' }])
       expect(read.groupBy).toBeDefined()
     })
@@ -473,22 +473,34 @@ describe('parser', () => {
     })
 
     test('fields without commas between them are an error, not extra sort fields', () => {
-      expect(() => parser('read t sort a b')).toThrow('Unrecognized query value')
+      expect(() => parser('read t sort a b')).toThrow('Unexpected "b" after "sort a"')
     })
   })
 
   describe('conditions', () => {
     const only = (queries) => parser(queries)[0]
 
-    test('or where is the older spelling of or (it was refused, and in 1.x read as and)', () => {
-      const a = { property: 'a', comparator: '=', value: 1 }
-      const b = { property: 'b', comparator: '=', value: 2 }
-      expect(only('read t where a = 1 or where b = 2').where).toEqual({ or: [a, b] })
-      expect(only('read t where a = 1 OR WHERE b = 2').where).toEqual({ or: [a, b] })
+    const hint = 'use and / or inside one where clause (where a = 1 and b = 2)'
+
+    test.each([
+      ['read t where a = 1 and where b = 2', `"and where" is no longer supported: ${hint}`],
+      ['read t where a = 1 OR WHERE b = 2', `"or where" is no longer supported: ${hint}`],
+      ['read t where a = 1 where b = 2', `Only one "where" clause is allowed: ${hint}`],
+      ['read t where (a = 1 and where b = 2)', `"and where" is no longer supported: ${hint}`],
+      ['read t where c = 3 and (a = 1 OR where b = 2)', `"or where" is no longer supported: ${hint}`]
+    ])('the 2.x forms of a second where are errors (3.0): %s', (query, message) => {
+      expect(() => parser(query)).toThrow(`(${message})`)
     })
 
-    test('and where still joins conditions, in any case', () => {
-      expect(conditionsOf(only('read t where a = 1 AND WHERE b = 2').where).map(({ property }) => property)).toEqual(['a', 'b'])
+    test('a field named where after and is still a condition (a clause word before a comparator is a name)', () => {
+      expect(conditionsOf(only('read t where a = 1 and where = 2').where).map(({ property }) => property)).toEqual(['a', 'where'])
+    })
+
+    test('and / or join conditions, in any case', () => {
+      const a = { property: 'a', comparator: '=', value: 1 }
+      const b = { property: 'b', comparator: '=', value: 2 }
+      expect(only('read t where a = 1 OR b = 2').where).toEqual({ or: [a, b] })
+      expect(only('read t where a = 1 AND b = 2').where).toEqual({ and: [a, b] })
     })
 
     test.each(['color', 'brand', 'floor', 'band'])('a join field ending in and/or (%s) keeps its whole name', name => {
@@ -504,18 +516,18 @@ describe('parser', () => {
     })
 
     test('a condition between a join and a sort: all three parse', () => {
-      const read = only('read t.u on t.x = u.y where a = 1 and where b = 2 sort a')
+      const read = only('read t.u on t.x = u.y where a = 1 and b = 2 sort a')
       expect(read.joinClauses).toEqual([{ propertyA: 't.x', comparator: '=', propertyB: 'u.y' }])
       expect(conditionsOf(read.where).map(({ property }) => property)).toEqual(['a', 'b'])
       expect(read.sortClauses).toEqual([{ property: 'a', direction: 'asc' }])
     })
 
     test('connectors after a newline or a tab', () => {
-      expect(conditionsOf(only('read t where a = 1\nand\twhere b = 2').where)).toHaveLength(2)
-      expect(only('read t where a = 1\nor\twhere b = 2').where).toEqual({ or: [{ property: 'a', comparator: '=', value: 1 }, { property: 'b', comparator: '=', value: 2 }] })
+      expect(conditionsOf(only('read t where a = 1\nand\tb = 2').where)).toHaveLength(2)
+      expect(only('read t where a = 1\nor\tb = 2').where).toEqual({ or: [{ property: 'a', comparator: '=', value: 1 }, { property: 'b', comparator: '=', value: 2 }] })
     })
 
-    test('or inside a string is just text', () => {
+    test('or where inside a string is just text', () => {
       expect(conditionsOf(only("read t where a = 'x or where b = 2'").where)[0].value).toBe('x or where b = 2')
     })
   })
@@ -550,7 +562,7 @@ describe('parser', () => {
     })
 
     test('an alias without as is an error, not a silent guess', () => {
-      expect(() => parser('read t select name n')).toThrow('Unrecognized query value: n')
+      expect(() => parser('read t select name n')).toThrow('Unexpected "n" after "select name"')
     })
   })
 
@@ -569,7 +581,7 @@ describe('parser', () => {
     ])('reads %s in insert, update and where', (written, value) => {
       expect(only(`insert t values n = ${written}, s = 'x'`).insertValues).toEqual([{ n: value, s: 'x' }])
       expect(only(`update t set n = ${written} where s = 'x'`).updateValues).toEqual({ n: value })
-      expect(conditionsOf(only(`read t where n > ${written} and where s = 'x'`).where)).toEqual([
+      expect(conditionsOf(only(`read t where n > ${written} and s = 'x'`).where)).toEqual([
         { property: 'n', comparator: '>', value },
         { property: 's', comparator: '=', value: 'x' }
       ])
@@ -613,6 +625,49 @@ describe('parser', () => {
 
     test('keeps a large number written as a string, as text', () => {
       expect(only("insert t values n = '9007199254740993'").insertValues).toEqual([{ n: '9007199254740993' }])
+    })
+  })
+
+  describe('text a clause can\'t read (each clause reads only its own body)', () => {
+    test.each([
+      ['read t foo bar where a = 1', 'Unexpected "foo bar" after "read t"'],
+      ['read t select', 'Missing a field after select'],
+      ["read t select a 'x y'", 'Unexpected "\'x y\'" after "select a"'],
+      ['read t.u on t.x = u.y junk', 'Unexpected "junk" after "on t.x = u.y"'],
+      ['read t.u on t.x = u.y and on junk', 'Unexpected "and on junk" after "on t.x = u.y"'],
+      ['read t merge a.x with b.y and merge q', 'Unexpected "and merge q" after "merge a.x with b.y"'],
+      ['read t group by', 'Missing a field after group by'],
+      ['read t limit x', 'Missing a whole number after limit: x'],
+      ['read t limit 5 6', 'Unexpected "6" after "limit 5"'],
+      ['read t offset', 'Missing a whole number after offset'],
+      ['insert t values', 'Missing an assignment (field = value) after values'],
+      ['insert t values a', 'Missing an assignment (field = value) after values: a'],
+      ['update t set a = 1 b = 2', 'Unexpected "b = 2" after "set a = 1"'],
+      ['readt x', 'Unrecognized query value: readt x']
+    ])('%s', (query, message) => {
+      expect(() => parser(query)).toThrow(`(${message})`)
+    })
+
+    test('several joins and merges, with or without and', () => {
+      const read = parser('read t.u on t.x = u.y and on u.z = v.w merge a.x with b.y merge c.z with d.w and merge e.f with g.h')[0]
+      expect(read.joinClauses.map(({ propertyA }) => propertyA)).toEqual(['t.x', 'u.z'])
+      expect(read.mergeJoins.map(({ propertyA }) => propertyA)).toEqual(['a.x', 'c.z', 'e.f'])
+    })
+
+    test.each([['a,b', ['a', 'b']], ['a, b', ['a', 'b']], ['a ,b,c', ['a', 'b', 'c']]])('group by %s: every field, in order (2.x kept only ",b")', (fields, expected) => {
+      expect(parser(`read t group by ${fields} sort a`)[0].groupBy).toEqual(expected)
+    })
+
+    test('a field named twice in group by is an error', () => {
+      expect(() => parser('read t group by a, b, a')).toThrow('("a" is in group by twice)')
+    })
+
+    test('group by fields need commas between them', () => {
+      expect(() => parser('read t group by a b')).toThrow('(Unexpected "b" after "group by a")')
+    })
+
+    test('a field named on after and is a condition (and on used to end the where clause)', () => {
+      expect(conditionsOf(parser('read t where a = 1 and on = 2')[0].where).map(({ property }) => property)).toEqual(['a', 'on'])
     })
   })
 })

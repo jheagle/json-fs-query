@@ -30,14 +30,8 @@ describe('where clause grammar', () => {
     })
   })
 
-  describe('the older spellings and forms still work', () => {
+  describe('keywords in any case', () => {
     test.each([
-      ['where a = 1 and where b = 1', { and: [c('a'), c('b')] }],
-      ['where a = 1 or where b = 1', { or: [c('a'), c('b')] }],
-      ['where a = 1 where b = 1', { and: [c('a'), c('b')] }],
-      ['where a = 1 sort a and where b = 1', { and: [c('a'), c('b')] }],
-      // Separate where clauses join with and around each whole expression: (a or b) and c, not a or (b and c)
-      ['where a = 1 or b = 1 sort a and where c = 1', { and: [{ or: [c('a'), c('b')] }, c('c')] }],
       ['WHERE a = 1 AND (b = 1 OR NOT c = 1)', { and: [c('a'), { or: [c('b'), { not: c('c') }] }] }]
     ])('%s', (text, tree) => {
       expect(whereOf(text)).toEqual(tree)
@@ -45,26 +39,17 @@ describe('where clause grammar', () => {
   })
 
   describe('the expression ends at the next clause keyword outside brackets', () => {
-    test('clauses after it, in any order', () => {
+    test('clauses after it', () => {
       const [read] = parser('read t where a = 1 or b = 1 sort a desc limit 2 offset 1')
       expect(read.where).toEqual({ or: [c('a'), c('b')] })
       expect(read.sortClauses).toEqual([{ property: 'a', direction: 'desc' }])
       expect([read.limit, read.offset]).toEqual([2, 1])
-      const [early] = parser('read t limit 2 where a = 1 or b = 1 sort a')
-      expect(early.where).toEqual({ or: [c('a'), c('b')] })
-      expect(early.limit).toBe(2)
     })
 
-    test('and on belongs to the join, not the expression', () => {
-      const [read] = parser('read t.v where a = 1 and (b = 1 or c = 1) on t.x = u.y and on u.z = v.w')
+    test('and on belongs to the join before it, not the expression', () => {
+      const [read] = parser('read t.v on t.x = u.y and on u.z = v.w where a = 1 and (b = 1 or c = 1)')
       expect(read.where).toEqual({ and: [c('a'), { or: [c('b'), c('c')] }] })
       expect(read.joinClauses).toHaveLength(2)
-    })
-
-    test('and on straight after the expression is the join\'s (accepted before, so still accepted)', () => {
-      const [read] = parser('read t.u where a = 1 or b = 1 and on t.x = u.y')
-      expect(read.where).toEqual({ or: [c('a'), c('b')] })
-      expect(read.joinClauses).toEqual([{ propertyA: 't.x', comparator: '=', propertyB: 'u.y' }])
     })
 
     test('brackets, and/or inside strings or arrays are only values', () => {
@@ -96,9 +81,14 @@ describe('where clause grammar', () => {
       ['where a = 1 or', 'Missing a condition after or'],
       ['where (a = 1 and)', 'Missing a condition after and: )'],
       ['where (not) and a = 1', 'Missing a condition after not: ) and a = 1'],
-      ['where a = 1 sort a or where b = 1', '`or where` must follow the conditions it joins'],
-      // Text after the expression that isn't a condition or a clause is left for parseQuery, which refuses it
-      ['where a = 1 foo', 'Unrecognized query value: foo']
+      // The clause rules come first (see splitClauses): the 2.x forms of a second where, then the order
+      ['where a = 1 sort a or where b = 1', '"or where" is no longer supported'],
+      ['where a = 1 sort a and where b = 1', '"and where" is no longer supported'],
+      ['where a = 1 where b = 1', 'Only one "where" clause is allowed'],
+      ['where a = 1 or b = 1 and on t.x = u.y', '"on" can\'t come after "where"'],
+      ['limit 2 where a = 1 or b = 1 sort a', '"where" can\'t come after "limit"'],
+      // Text after the expression that isn't a condition is left for parseQuery, which refuses it
+      ['where a = 1 foo', 'Unexpected "foo" after "where a = 1"']
     ])('%s', (text, message) => {
       expect(() => parser(`read t ${text}`)).toThrow(message)
     })

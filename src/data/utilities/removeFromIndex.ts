@@ -1,10 +1,8 @@
 import { keyDefinition } from '../introspect/definitions/key'
 import { recordPath } from '../introspect/definitions/record'
 import { indexEntry } from './updateIndex'
-import { getSetting } from './config'
 import { sameValue } from './compareAs'
-
-const { readFile, writeFile } = require('fs/promises')
+import { readJson, writeJson } from '../storage'
 
 /**
  * Remove a single entry file from the index that backs one of a record's keys, dropping a value
@@ -20,17 +18,16 @@ export const removeFromIndex = async (path: recordPath = '', key: keyDefinition 
   if (!key || !key.lookup) {
     return null
   }
-  const databasePath = getSetting('databasePath', 'database/')
-  const indexPath = `${databasePath}__indexes/${path}/${key.lookup}`
+  const indexPath = `__indexes/${path}/${key.lookup}`
   let index: indexEntry[] = []
   try {
-    index = JSON.parse(await readFile(indexPath, 'utf8'))
+    index = await readJson(indexPath)
   } catch (err) {
     return null
   }
   index = index
     .map(entry => sameValue(type, entry.value, value) ? { value: entry.value, record: entry.record.filter(record => record !== fileName) } : entry)
     .filter(entry => entry.record.length)
-  await writeFile(indexPath, JSON.stringify(index, null, 2))
+  await writeJson(indexPath, index)
   return index
 }

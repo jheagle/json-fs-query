@@ -24,14 +24,14 @@ describe('selectFields', () => {
     ])
   })
 
-  test('shapes each row within a grouped (groupBy) result, keeping the group keys', () => {
-    const grouped = {
-      '2024-06-02': [{ _id: 1, reps: 10, date: '2024-06-02' }],
-      '2024-06-05': [{ _id: 2, reps: 12, date: '2024-06-05' }]
-    }
-    expect(selectFields(grouped, [{ property: 'reps', alias: undefined }])).toEqual({
-      '2024-06-02': [{ reps: 10 }],
-      '2024-06-05': [{ reps: 12 }]
-    })
+  test('shapes each row within grouped (groupBy) results at any depth, keeping each group\'s field and value', () => {
+    const grouped = [
+      { field: 'date', value: '2024-06-02', rows: [{ _id: 1, reps: 10, date: '2024-06-02' }] },
+      { field: 'date', missing: true, groups: [{ field: 'reps', value: 12, rows: [{ _id: 2, reps: 12 }] }] }
+    ]
+    expect(selectFields(grouped, [{ property: '_id', alias: 'id' }], true)).toEqual([
+      { field: 'date', value: '2024-06-02', rows: [{ id: 1 }] },
+      { field: 'date', missing: true, groups: [{ field: 'reps', value: 12, rows: [{ id: 2 }] }] }
+    ])
   })
 })

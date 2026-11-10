@@ -1,7 +1,8 @@
 import { numberSource, parseLiteralValue, LiteralValue } from './parseLiteralValue'
 import { ParsedQuery } from './parseQuery'
-import { allOf, ConditionNode, isCondition } from '../conditionTree'
+import { ConditionNode, isCondition } from '../conditionTree'
 import { arraySource, placeholderSource, unmaskStrings } from './maskStrings'
+import { whereHint } from './splitClauses'
 
 export type ConditionValue = LiteralValue
 
@@ -20,10 +21,6 @@ const keyword = (words: string): RegExp => new RegExp(`^(?:${words})${wordEnd}`,
 // One condition, at the start of the text: a field, then `is [not] null` / `exists` / `does not exist`, or a comparator
 // and a value (strings and arrays are placeholders by then, see maskStrings)
 const conditionMatch: RegExp = new RegExp(`^([a-z0-9_-]+\\.?[a-z0-9_-]*)\\s+(?:(is\\s+not\\s+null|is\\s+null|exists|does\\s+not\\s+exist)${wordEnd}|(<>|!=|>=|<=|=|>|<|in|between|like)\\s+(${placeholderSource}|(${numberSource})|${arraySource}|(null)|(true)|(false)))`, 'i')
-
-// The clause keywords that end a where expression (outside brackets), and `and on` (a join clause's own `and`)
-const expressionEnd: RegExp = keyword('sort|group|limit|offset|select|merge|on|where|and\\s+on')
-const whereMatch: RegExp = new RegExp(`(^|[^a-z0-9._-])((?:(and|or)\\s+)?where)${wordEnd}`, 'i')
 
 /**
  * Read one condition from a match of conditionMatch.
@@ -58,15 +55,15 @@ const join = (kind: 'and' | 'or', nodes: ConditionNode[]): ConditionNode => {
 }
 
 /**
- * Read one where expression from the masked query, starting at `start` (just after its `where`). Precedence, loosest
- * first: `or`, `and`, `not`; brackets group. `and where` / `or where` are the older spellings of `and` / `or`.
+ * Read one where expression from the start of a where clause body (masked, see maskStrings). Precedence, loosest
+ * first: `or`, `and`, `not`; brackets group.
  * @param text
- * @param start
- * @returns The expression's tree and where it ends (the next clause keyword outside brackets, or the end).
- * @throws {Error} For an unbalanced bracket, empty brackets, or an operator with no condition after it.
+ * @returns The expression's tree and where it ends (at the first text that can't carry it on, or the end).
+ * @throws {Error} For an unbalanced bracket, empty brackets, an operator with no condition after it, or two conditions
+ * with no and/or between them.
  */
-const readExpression = (text: string, start: number): { node: ConditionNode, end: number } => {
-  let at = start
+const readExpression = (text: string): { node: ConditionNode, end: number } => {
+  let at = 0
   const rest = (): string => text.slice(at)
   const skipSpace = (): void => {
     at += rest().length - rest().trimStart().length
@@ -90,6 +87,10 @@ const readExpression = (text: string, start: number): { node: ConditionNode, end
       at += condition[0].length
       return readCondition(condition)
     }
+    // The 2.x `and where` / `or where` inside brackets, where splitClauses doesn't look
+    if ((after === 'and' || after === 'or') && keyword('where').test(rest())) {
+      throw new Error(`"${after} where" is no longer supported: ${whereHint}`)
+    }
     if (take(keyword('not'))) {
       return { not: factor('not') }
     }
@@ -111,11 +112,7 @@ const readExpression = (text: string, start: number): { node: ConditionNode, end
   const term = (after: string): ConditionNode => {
     const nodes = [factor(after)]
     for (;;) {
-      skipSpace()
-      if (keyword('and\\s+on').test(rest())) {
-        break
-      }
-      const connector = take(keyword('and(?:\\s+where)?'))
+      const connector = take(keyword('and'))
       if (!connector) {
         break
       }
@@ -127,7 +124,7 @@ const readExpression = (text: string, start: number): { node: ConditionNode, end
   const expression = (after: string): ConditionNode => {
     const nodes = [term(after)]
     for (;;) {
-      const connector = take(keyword('or(?:\\s+where)?'))
+      const connector = take(keyword('or'))
       if (!connector) {
         break
       }
@@ -141,34 +138,24 @@ const readExpression = (text: string, start: number): { node: ConditionNode, end
   if (rest().startsWith(')')) {
     throw new Error(`Unexpected ) in a where clause: ${shown()}`)
   }
-  if (rest() && !expressionEnd.test(rest()) && conditionMatch.test(rest())) {
+  if (conditionMatch.test(rest())) {
     throw new Error(`Missing and/or before: ${shown()}`)
   }
   return { node, end: at }
 }
 
 /**
- * Extract the where clause from the query into a tree (see ConditionNode): `where` followed by conditions joined with
- * `and` / `or`, `not`, and brackets, nested to any depth. Each condition is `<field> <comparator> <value>`, or
- * `<field> is null`, `is not null`, `exists` or `does not exist`. A comparison with the literal null (`= null`) is
- * refused: it would never match, as null equals nothing (see where). The expression ends at the next clause keyword
- * outside brackets, so clauses may come in any order; several separate `where`s (or `and where` after another clause)
- * are joined with `and`, as before.
+ * Read a where clause body (see splitClauses) into a tree (see ConditionNode): conditions joined with `and` / `or`,
+ * `not`, and brackets, nested to any depth. Each condition is `<field> <comparator> <value>`, or `<field> is null`,
+ * `is not null`, `exists` or `does not exist`. A comparison with the literal null (`= null`) is refused: it would never
+ * match, as null equals nothing (see where).
  * @param parsed
- * @param query
- * @throws {Error} For the errors readExpression and readCondition describe, and `or where` after another clause.
+ * @param body
+ * @returns The rest of the body, after the expression.
+ * @throws {Error} For the errors readExpression and readCondition describe.
  */
-export const findConditions = (parsed: ParsedQuery, query: string): string => {
-  const expressions: ConditionNode[] = []
-  for (let found = query.match(whereMatch); found; found = query.match(whereMatch)) {
-    if ((found[3] || '').toLowerCase() === 'or') {
-      throw new Error('`or where` must follow the conditions it joins: put them in one where clause')
-    }
-    const whereStart = found.index + found[1].length
-    const { node, end } = readExpression(query, whereStart + found[2].length)
-    expressions.push(node)
-    query = `${query.slice(0, whereStart)} ${query.slice(end)}`.replace(/\s+/g, ' ').trim()
-  }
-  parsed['where'] = expressions.length ? join('and', expressions) : allOf([])
-  return query
+export const findConditions = (parsed: ParsedQuery, body: string): string => {
+  const { node, end } = readExpression(body)
+  parsed['where'] = node
+  return body.slice(end).trim()
 }

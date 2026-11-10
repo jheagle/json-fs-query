@@ -1,7 +1,5 @@
 import { recordDefinition } from '../introspect/definitions/record'
-import { getSetting } from './config'
-
-const { readFile, writeFile } = require('fs/promises')
+import { readJson, writeJson } from '../storage'
 
 /**
  * __RECORDS is itself an ordinary record - path/definition/keys/entries - whose entries are the
@@ -27,11 +25,10 @@ const defaultRegistry = (): recordDefinition => ({
  * @param recordName
  */
 export const registerRecord = async (recordName: string): Promise<recordDefinition> => {
-  const databasePath = getSetting('databasePath', 'database/')
-  const registryPath = `${databasePath}__RECORDS.json`
+  const registryPath = '__RECORDS.json'
   let registry: recordDefinition
   try {
-    registry = JSON.parse(await readFile(registryPath, 'utf8'))
+    registry = await readJson(registryPath)
   } catch (err) {
     registry = defaultRegistry()
   }
@@ -39,6 +36,6 @@ export const registerRecord = async (recordName: string): Promise<recordDefiniti
   if (!registry.entries.includes(fileName)) {
     registry.entries.push(fileName)
   }
-  await writeFile(registryPath, JSON.stringify(registry, null, 2))
+  await writeJson(registryPath, registry)
   return registry
 }

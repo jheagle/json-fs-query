@@ -200,77 +200,49 @@ describe('query', () => {
     })
   })
 
-  test('it can use sort and group by', async () => {
-    const queryString = 'read workouts sort date desc, order asc group by date'
-    const result = await query(queryString)
-    expect(result).toEqual([
-      {
-        '2024-06-02': [
-          {
-            _id: 1,
-            exercise_id: 1,
-            weight_effort: '115lbs',
-            reps: 10,
-            sets: 3,
-            note: '',
-            order: 0,
-            date: '2024-06-02'
-          },
-          {
-            _id: 2,
-            exercise_id: 2,
-            weight_effort: '155lbs',
-            reps: 10,
-            sets: 3,
-            note: '',
-            order: 1,
-            date: '2024-06-02'
-          },
-          {
-            _id: 3,
-            exercise_id: 3,
-            weight_effort: '155lbs',
-            reps: 10,
-            sets: 3,
-            note: '',
-            order: 2,
-            date: '2024-06-02'
-          },
-        ],
-        '2024-06-05': [
-          {
-            _id: 4,
-            exercise_id: 1,
-            weight_effort: '120lbs',
-            reps: 10,
-            sets: 3,
-            note: '',
-            order: 0,
-            date: '2024-06-05'
-          },
-          {
-            _id: 5,
-            exercise_id: 2,
-            weight_effort: '160lbs',
-            reps: 10,
-            sets: 3,
-            note: '',
-            order: 1,
-            date: '2024-06-05'
-          },
-          {
-            _id: 6,
-            exercise_id: 3,
-            weight_effort: '160lbs',
-            reps: 10,
-            sets: 3,
-            note: '',
-            order: 2,
-            date: '2024-06-05'
-          }
-        ]
-      }
-    ])
+  describe('group by', () => {
+    // The fixture: workouts 1-3 on 2024-06-02 and 4-6 on 2024-06-05, exercise_id 1, 2, 3 on each day
+    const summary = (groups) => groups.map(({ value, rows, groups: inner }) =>
+      [value, rows ? rows.map(({ _id }) => _id) : summary(inner)])
+
+    test('groups come as a list, in the sorted order, each with its rows in order', async () => {
+      const [groups] = await query('read workouts group by date sort date desc, order asc')
+      expect(groups.map(({ field, value }) => [field, value])).toEqual([['date', '2024-06-05'], ['date', '2024-06-02']])
+      expect(summary(groups)).toEqual([['2024-06-05', [4, 5, 6]], ['2024-06-02', [1, 2, 3]]])
+    })
+
+    test('a number field keeps the sort order (2.x always put number keys ascending)', async () => {
+      const [groups] = await query('read workouts group by exercise_id sort exercise_id desc, _id')
+      expect(summary(groups)).toEqual([[3, [3, 6]], [2, [2, 5]], [1, [1, 4]]])
+    })
+
+    test.each([
+      ['limit 1', [['2024-06-05', [4, 5, 6]]]],
+      ['limit 1 offset 1', [['2024-06-02', [1, 2, 3]]]],
+      ['offset 1', [['2024-06-02', [1, 2, 3]]]]
+    ])('%s counts groups, not rows (2.x limited the rows, then grouped them)', async (clauses, expected) => {
+      const [groups] = await query(`read workouts group by date sort date desc, _id ${clauses}`)
+      expect(summary(groups)).toEqual(expected)
+    })
+
+    test('rows missing the field are a group of their own, sorted first, counted by limit and shaped by select', async () => {
+      // weight_effort is optional: this workout leaves it out
+      await query("insert workouts values _id = '7', exercise_id = 2, reps = 8, sets = 3, order = 0, date = '2024-06-09'")
+      const [groups] = await query('read workouts select date group by weight_effort sort weight_effort, _id limit 2')
+      expect(groups).toEqual([
+        { field: 'weight_effort', missing: true, rows: [{ date: '2024-06-09' }] },
+        { field: 'weight_effort', value: '115lbs', rows: [{ date: '2024-06-02' }] }
+      ])
+    })
+
+    test('several fields nest, and select shapes the rows inside (the group fields stay on the groups)', async () => {
+      const [groups] = await query('read workouts select _id group by date, weight_effort sort date desc, _id')
+      expect(summary(groups)).toEqual([
+        ['2024-06-05', [['120lbs', [4]], ['160lbs', [5, 6]]]],
+        ['2024-06-02', [['115lbs', [1]], ['155lbs', [2, 3]]]]
+      ])
+      expect(groups[0].groups[1]).toEqual({ field: 'weight_effort', value: '160lbs', rows: [{ _id: 5 }, { _id: 6 }] })
+    })
   })
 
   test('a multi-field unique key works end-to-end through insert/update query strings', async () => {
@@ -310,7 +282,7 @@ describe('query', () => {
   })
 
   test('offset skips that many rows, and combines with limit to page through a real query string', async () => {
-    const result = await query('read workouts sort date asc, order asc offset 2 limit 2')
+    const result = await query('read workouts sort date asc, order asc limit 2 offset 2')
     expect(result[0]).toHaveLength(2)
     expect(result[0].map(row => row._id)).toEqual([3, 4])
   })
@@ -325,7 +297,7 @@ describe('query', () => {
   })
 
   test('select, limit and offset all combine on the same real query string', async () => {
-    const result = await query('read workouts select _id, date sort date asc, order asc offset 1 limit 2')
+    const result = await query('read workouts select _id, date sort date asc, order asc limit 2 offset 1')
     expect(result[0]).toEqual([
       { _id: 2, date: '2024-06-02' },
       { _id: 3, date: '2024-06-02' }
@@ -358,19 +330,28 @@ describe('query', () => {
     expect(result[0].length).toBeGreaterThan(0)
     expect(result[0].every(row => row.reps === 10)).toBe(true)
   })
-  test('a null literal in a query is stored as a real null in a nullable field, and rejected in any other', async () => {
+  test('a null literal in a query is stored as a real null in a nullable field, left out of an optional one, and rejected in a required one', async () => {
     await create('notes', [
       { name: '_id', type: 'string', optional: false, autoGenerate: true },
       { name: 'text', type: 'string', optional: true, nullable: true },
-      { name: 'count', type: 'int', optional: true }
+      { name: 'count', type: 'int', optional: true },
+      { name: 'kind', type: 'string', optional: true, useDefault: true, defaultValue: 'plain' },
+      { name: 'owner', type: 'string', optional: false, useDefault: true, defaultValue: 'me' }
     ], [
       { type: 'primary', fields: ['_id'], lookup: 'pk__id.json' }
     ])
 
-    const inserted = await query('insert notes values text = null')
-    expect(inserted[0][0].text).toBeNull()
+    const [[nullable]] = await query('insert notes values text = null')
+    expect(nullable.text).toBeNull()
 
-    await expect(query('insert notes values count = null'))
+    // An optional field that isn't nullable can't hold null: null means leaving it out, so its default fills it in
+    const [[optional]] = await query('insert notes values count = null, kind = null')
+    expect(optional).not.toHaveProperty('count')
+    expect(optional.kind).toBe('plain')
+    const [[stored]] = await query(`read notes where _id = '${optional._id}'`)
+    expect(stored).not.toHaveProperty('count')
+
+    await expect(query('insert notes values owner = null'))
       .rejects.toThrow('Value "null" is not allowed: the field is not nullable')
   })
 
@@ -468,11 +449,14 @@ describe('query', () => {
 
     // exercises._id is indexed: it used to be dropped once its index had narrowed the exercises, and the delete then
     // hit every workout
+    // update and delete take no joined record since 3.0.0 (see splitClauses); the conditions are still checked without one
     test.each([
-      [`delete ${join} where exercises._id = 1`, 'delete can only use conditions on workouts\'s own fields, not exercises._id'],
-      [`delete ${join} where exercises.name = 'Bench Press'`, 'not exercises.name'],
-      [`delete ${join} where date = '2024-06-02' and where exercises._id = 1`, 'not exercises._id'],
-      [`update ${join} set reps = 1 where exercises._id = 1`, 'update can only use conditions on workouts\'s own fields, not exercises._id']
+      ['delete workouts where exercises._id = 1', 'delete can only use conditions on workouts\'s own fields, not exercises._id'],
+      ["delete workouts where exercises.name = 'Bench Press'", 'not exercises.name'],
+      ["delete workouts where date = '2024-06-02' and exercises._id = 1", 'not exercises._id'],
+      ['update workouts set reps = 1 where exercises._id = 1', 'update can only use conditions on workouts\'s own fields, not exercises._id'],
+      [`delete ${join} where exercises._id = 1`, 'A joined record (workouts.exercises) isn\'t allowed in a delete query'],
+      [`update ${join} set reps = 1 where exercises._id = 1`, 'A joined record (workouts.exercises) isn\'t allowed in an update query']
     ])('%s is refused and changes nothing', async (text, message) => {
       await expect(query(text)).rejects.toThrow(message)
       expect(await count()).toBe(6)
@@ -490,25 +474,25 @@ describe('query', () => {
     const ids = async (text) => (await query(text))[0].map(row => String(row._id)).sort()
 
     test('every indexed condition must match, in either order (each used to replace the one before)', async () => {
-      expect(await ids("read workouts where date = '2024-06-02' and where exercise_id = 1")).toEqual(['1'])
-      expect(await ids("read workouts where exercise_id = 1 and where date = '2024-06-02'")).toEqual(['1'])
-      expect(await ids("read workouts where exercise_id = 1 and where date = '2024-06-05'")).toEqual(['4'])
-      expect(await ids("read workouts where exercise_id = 1 and where date = '2024-06-09'")).toEqual([])
+      expect(await ids("read workouts where date = '2024-06-02' and exercise_id = 1")).toEqual(['1'])
+      expect(await ids("read workouts where exercise_id = 1 and date = '2024-06-02'")).toEqual(['1'])
+      expect(await ids("read workouts where exercise_id = 1 and date = '2024-06-05'")).toEqual(['4'])
+      expect(await ids("read workouts where exercise_id = 1 and date = '2024-06-09'")).toEqual([])
     })
 
     test('an indexed and an unindexed condition together', async () => {
-      expect(await ids("read workouts where date = '2024-06-05' and where reps = 10 and where exercise_id in [2, 3]")).toEqual(['5', '6'])
+      expect(await ids("read workouts where date = '2024-06-05' and reps = 10 and exercise_id in [2, 3]")).toEqual(['5', '6'])
     })
 
     test('update changes only the rows every condition matches', async () => {
-      await query("update workouts set note = 'x' where date = '2024-06-02' and where exercise_id = 1")
+      await query("update workouts set note = 'x' where date = '2024-06-02' and exercise_id = 1")
       expect(await ids("read workouts where note = 'x'")).toEqual(['1'])
     })
 
     test.each([
-      ['read', "read workouts where date = '2024-06-09' and where reps = 10"],
-      ['update', "update workouts set note = 'x' where date = '2024-06-09' and where reps = 10"],
-      ['delete', "delete workouts where date = '2024-06-09' and where reps = 10"]
+      ['read', "read workouts where date = '2024-06-09' and reps = 10"],
+      ['update', "update workouts set note = 'x' where date = '2024-06-09' and reps = 10"],
+      ['delete', "delete workouts where date = '2024-06-09' and reps = 10"]
     ])('%s: an indexed condition matching nothing, with an unindexed one, matches nothing (it used to match every row with reps 10)', async (command, text) => {
       expect((await query(text))[0]).toEqual([])
       expect(await ids('read workouts')).toEqual(['1', '2', '3', '4', '5', '6'])
@@ -516,7 +500,7 @@ describe('query', () => {
     })
 
     test('delete removes only the rows every condition matches (it used to delete every row with exercise_id 1)', async () => {
-      await query("delete workouts where date = '2024-06-02' and where exercise_id = 1")
+      await query("delete workouts where date = '2024-06-02' and exercise_id = 1")
       expect(await ids('read workouts')).toEqual(['2', '3', '4', '5', '6'])
     })
   })
@@ -538,7 +522,7 @@ describe('query', () => {
     test.each(['both', 'composite'])('%s: conditions on either field find their rows', async (record) => {
       expect(await names(`read ${record} where x = 1`)).toEqual(['one', 'two'])
       expect(await names(`read ${record} where y = 1`)).toEqual(['one', 'three'])
-      expect(await names(`read ${record} where x = 1 and where y = 2`)).toEqual(['two'])
+      expect(await names(`read ${record} where x = 1 and y = 2`)).toEqual(['two'])
     })
   })
 
@@ -559,11 +543,11 @@ describe('query', () => {
 
     test('two indexed conditions: the stale row survives the intersection, then the condition drops it', async () => {
       // row 4 has exercise_id 1, so it is in both indexes' answers
-      expect(await ids("read workouts where date = '2024-06-02' and where exercise_id = 1")).toEqual(['1'])
+      expect(await ids("read workouts where date = '2024-06-02' and exercise_id = 1")).toEqual(['1'])
     })
 
     test('an indexed and an unindexed condition', async () => {
-      expect(await ids("read workouts where date = '2024-06-02' and where reps = 10")).toEqual(['1', '2', '3'])
+      expect(await ids("read workouts where date = '2024-06-02' and reps = 10")).toEqual(['1', '2', '3'])
     })
 
     test('update and delete touch only rows the condition really matches', async () => {

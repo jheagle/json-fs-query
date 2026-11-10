@@ -1,20 +1,27 @@
-import { removeFromQuery } from './removeFromQuery'
 import { ParsedQuery } from './parseQuery'
 
-const groupMatch: RegExp = /group\s+by\s+(,?[a-z0-9._-]+)+/i
+const groupMatch: RegExp = /^[a-z0-9._-]+(?:\s*,\s*[a-z0-9._-]+)*/i
 
-export type ParsedGroupBy = string
+// The fields to group by, in order: `group by a, b` groups by a, then by b within each group
+export type ParsedGroupBy = string[]
 
 /**
- * Extract the group by clauses from the query.
+ * Read a group by clause body (`a, b`, see splitClauses).
  * @param parsed
- * @param query
+ * @param body
+ * @returns The rest of the body, after the last field.
+ * @throws {Error} For a field named twice.
  */
-export const findGroupBy = (parsed: ParsedQuery, query: string): string => {
-  const groupFound: RegExpMatchArray = query.match(groupMatch)
+export const findGroupBy = (parsed: ParsedQuery, body: string): string => {
+  const groupFound: RegExpMatchArray = body.match(groupMatch)
   if (groupFound) {
-    parsed['groupBy'] = groupFound ? groupFound[1] : undefined
-    return removeFromQuery(groupFound[0], query)
+    const fields = groupFound[0].split(/\s*,\s*/)
+    const repeated = fields.find((field, index) => fields.indexOf(field) !== index)
+    if (repeated) {
+      throw new Error(`"${repeated}" is in group by twice`)
+    }
+    parsed['groupBy'] = fields
+    return body.slice(groupFound[0].length).trim()
   }
-  return query
+  return body
 }

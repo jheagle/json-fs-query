@@ -1,7 +1,8 @@
-import { removeFromQuery } from './removeFromQuery'
 import { ParsedQuery } from './parseQuery'
 
-const mergeJoinMatch: RegExp = /(and)?\s*merge\s+([a-z0-9_-]+\.[a-z0-9_-]+)\s+with\s+([a-z0-9_-]+\.[a-z0-9_-]+)/ig
+// One merge, at the start of the text; every one after the first starts with `merge` or `and merge` (see splitClauses)
+const mergeJoinMatch: RegExp = /^([a-z0-9_-]+\.[a-z0-9_-]+)\s+with\s+([a-z0-9_-]+\.[a-z0-9_-]+)(?![a-z0-9._-])/i
+const nextMatch: RegExp = /^(?:and\s+)?merge\s+/i
 
 export type ParsedMergeJoin = {
   propertyA: string
@@ -9,19 +10,25 @@ export type ParsedMergeJoin = {
 }
 
 /**
- * Extract merge-join clauses from the query.
+ * Read a merge clause body (`a.x with b.y merge c.z with d.w`, see splitClauses).
  * @param parsed
- * @param query
+ * @param body
+ * @returns The rest of the body, after the last merge.
  */
-export const findMergeJoins = (parsed: ParsedQuery, query: string): string => {
-  const mergeJoinsFound: IterableIterator<RegExpMatchArray> = query.matchAll(mergeJoinMatch)
-  // @ts-ignore
-  for (const mergeJoin of mergeJoinsFound) {
+export const findMergeJoins = (parsed: ParsedQuery, body: string): string => {
+  let rest = body
+  for (let mergeJoin = rest.match(mergeJoinMatch); mergeJoin; mergeJoin = rest.match(mergeJoinMatch)) {
     parsed['mergeJoins'].push({
-      propertyA: mergeJoin[2],
-      propertyB: mergeJoin[3]
+      propertyA: mergeJoin[1],
+      propertyB: mergeJoin[2]
     })
-    query = removeFromQuery(mergeJoin[0].trim(), query)
+    rest = rest.slice(mergeJoin[0].length).trim()
+    // The connector only with another one after it, so a bad one is shown with its connector
+    const next = rest.match(nextMatch)
+    if (!next || !mergeJoinMatch.test(rest.slice(next[0].length))) {
+      break
+    }
+    rest = rest.slice(next[0].length)
   }
-  return query
+  return rest
 }

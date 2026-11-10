@@ -4,8 +4,8 @@ const placeholders = text => [...text.matchAll(new RegExp(placeholderSource, 'g'
 
 describe('maskStrings', () => {
   test('replaces each string with a placeholder holding its value, leaving the rest of the query as it was', () => {
-    const masked = maskStrings('read t where a = \'x\' and where b = "y"')
-    expect(masked).toMatch(new RegExp(`^read t where a = ${placeholderSource} and where b = ${placeholderSource}$`))
+    const masked = maskStrings('read t where a = \'x\' and b = "y"')
+    expect(masked).toMatch(new RegExp(`^read t where a = ${placeholderSource} and b = ${placeholderSource}$`))
     expect(placeholders(masked)).toEqual(['x', 'y'])
   })
 

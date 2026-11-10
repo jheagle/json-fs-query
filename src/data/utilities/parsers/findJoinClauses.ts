@@ -1,7 +1,8 @@
-import { removeFromQuery } from './removeFromQuery'
 import { ParsedQuery } from './parseQuery'
 
-const joinClauseMatch: RegExp = /(and)?\s*on\s+([a-z0-9_-]+\.[a-z0-9_-]+)\s+(=|!=|>|<|>=|<=|in|between|like)\s+([a-z0-9_-]+\.[a-z0-9_-]+)/ig
+// One join condition, at the start of the text; every one after the first starts with `and on` (see splitClauses)
+const joinClauseMatch: RegExp = /^([a-z0-9_-]+\.[a-z0-9_-]+)\s+(=|!=|>|<|>=|<=|in|between|like)\s+([a-z0-9_-]+\.[a-z0-9_-]+)(?![a-z0-9._-])/i
+const nextMatch: RegExp = /^and\s+on\s+/i
 
 export type ParsedJoinClause = {
   propertyA: string
@@ -10,20 +11,26 @@ export type ParsedJoinClause = {
 }
 
 /**
- * Extract condition clauses from the query.
+ * Read an on clause body (`a.x = b.y and on b.z = c.w`, see splitClauses).
  * @param parsed
- * @param query
+ * @param body
+ * @returns The rest of the body, after the last join condition.
  */
-export const findJoinClauses = (parsed: ParsedQuery, query: string): string => {
-  const joinClausesFound: IterableIterator<RegExpMatchArray> = query.matchAll(joinClauseMatch)
-  // @ts-ignore
-  for (const joinClause of joinClausesFound) {
+export const findJoinClauses = (parsed: ParsedQuery, body: string): string => {
+  let rest = body
+  for (let joinClause = rest.match(joinClauseMatch); joinClause; joinClause = rest.match(joinClauseMatch)) {
     parsed['joinClauses'].push({
-      propertyA: joinClause[2],
-      comparator: joinClause[3],
-      propertyB: joinClause[4]
+      propertyA: joinClause[1],
+      comparator: joinClause[2],
+      propertyB: joinClause[3]
     })
-    query = removeFromQuery(joinClause[0], query)
+    rest = rest.slice(joinClause[0].length).trim()
+    // The connector only with another one after it, so a bad one is shown with its connector
+    const next = rest.match(nextMatch)
+    if (!next || !joinClauseMatch.test(rest.slice(next[0].length))) {
+      break
+    }
+    rest = rest.slice(next[0].length)
   }
-  return query
+  return rest
 }

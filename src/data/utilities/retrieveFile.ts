@@ -1,16 +1,12 @@
-import * as jsEnv from 'browser-or-node'
-import { getSetting } from './config'
+import { readJson } from '../storage'
 
+/**
+ * Read one JSON file of the database (see readJson), logging the underlying error and throwing one that names the file.
+ * @param path - A path inside the database, such as `users.json`.
+ * @throws {Error} `Could not read <path>` when the file can't be read.
+ */
 export const retrieveFile = async (path) => {
-  let retrieveFn = url => fetch(url).then(res => res.json())
-  const relativePath = jsEnv.isBrowser ? getSetting('relativePath', '') : ''
-  if (jsEnv.isNode) {
-    const { readFile } = require('fs/promises')
-    retrieveFn = url => readFile(url).then(res => JSON.parse(res))
-  }
-  const databasePath = getSetting('databasePath', 'database/')
-  const fetchUrl = `${relativePath}${databasePath}${path}`
-  const recordInfo = await retrieveFn(fetchUrl)
+  const recordInfo = await readJson(path)
     .catch(err => console.error(err))
   if (!recordInfo) {
     throw new Error(`Could not read ${path}`)
