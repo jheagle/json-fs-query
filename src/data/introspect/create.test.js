@@ -100,5 +100,46 @@ describe('create', () => {
         { name: '_id', type: 'string', nullable: true }
       ], primary)).rejects.toThrow('Primary key field "_id" of foo can\'t be nullable')
     })
+
+    test('rejects an optional primary key field (a row without it would be stored as undefined.json), unless it is auto', async () => {
+      await expect(create('foo', [
+        { name: '_id', type: 'string', optional: true }
+      ], primary)).rejects.toThrow('Primary key field "_id" of foo can\'t be optional')
+      await expect(create('bar', [
+        { name: 'a', type: 'string' },
+        { name: 'b', type: 'string', optional: true }
+      ], [{ type: 'primary', fields: ['a', 'b'] }])).rejects.toThrow('Primary key field "b" of bar can\'t be optional')
+      await expect(create('baz', [
+        { name: '_id', type: 'string', optional: true, autoGenerate: true }
+      ], primary)).resolves.not.toBeNull()
+    })
+
+    describe('invalid keys', () => {
+      const definition = [{ name: '_id', type: 'string' }]
+      const expectNothingWritten = () => {
+        expect(fileExists(`${databasePath}foo.json`)).toBeFalsy()
+        expect(fileExists(`${databasePath}foo`)).toBeFalsy()
+        const registry = fileExists(`${databasePath}__RECORDS.json`) ? require('fs').readFileSync(`${databasePath}__RECORDS.json`, 'utf8') : ''
+        expect(registry).not.toContain('foo.json')
+      }
+
+      test('rejects a key with no fields, creating nothing', async () => {
+        await expect(create('foo', definition, [{ type: 'primary' }]))
+          .rejects.toThrow('The primary key of foo must have at least one field')
+        expectNothingWritten()
+      })
+
+      test('rejects a key naming a field that is not in the definition, creating nothing', async () => {
+        await expect(create('foo', definition, [{ type: 'unique', fields: ['nope'] }]))
+          .rejects.toThrow('The unique key of foo names field "nope", which isn\'t in the definition')
+        expectNothingWritten()
+      })
+
+      test('rejects an unknown key property, creating nothing', async () => {
+        await expect(create('foo', definition, [{ type: 'primary', keys: ['_id'] }]))
+          .rejects.toThrow('Unknown property "keys" on primary key of foo; must be type, fields, lookup, references')
+        expectNothingWritten()
+      })
+    })
   })
 })

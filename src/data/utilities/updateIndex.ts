@@ -1,9 +1,7 @@
 import { keyDefinition } from '../introspect/definitions/key'
 import { recordPath } from '../introspect/definitions/record'
-import { getSetting } from './config'
 import { sameValue } from './compareAs'
-
-const { readFile, writeFile, mkdir } = require('fs/promises')
+import { makeDirectory, readJson, writeJson } from '../storage'
 
 export type indexEntry = {
   value: any
@@ -24,12 +22,11 @@ export const updateIndex = async (path: recordPath = '', key: keyDefinition = nu
   if (!key || !key.lookup) {
     return null
   }
-  const databasePath = getSetting('databasePath', 'database/')
-  const indexDir = `${databasePath}__indexes/${path}`
+  const indexDir = `__indexes/${path}`
   const indexPath = `${indexDir}/${key.lookup}`
   let index: indexEntry[] = []
   try {
-    index = JSON.parse(await readFile(indexPath, 'utf8'))
+    index = await readJson(indexPath)
   } catch (err) {
     index = []
   }
@@ -41,7 +38,7 @@ export const updateIndex = async (path: recordPath = '', key: keyDefinition = nu
   } else {
     index.push({ value, record: [fileName] })
   }
-  await mkdir(indexDir, { recursive: true })
-  await writeFile(indexPath, JSON.stringify(index, null, 2))
+  await makeDirectory(indexDir)
+  await writeJson(indexPath, index)
   return index
 }

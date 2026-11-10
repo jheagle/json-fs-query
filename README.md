@@ -1,14 +1,93 @@
 # json-fs-query
 
-Read and manage data with JSON files - a small query engine that treats a folder of JSON files as a database, with
-a SQL-like query string (`read workouts where date = '2024-06-02'`) instead of a query builder API.
+A git-native JSON data store for static sites. Your data lives in a folder of plain JSON files, committed with the
+rest of the site: readable, diffable and reviewed in pull requests like code. json-fs-query adds what a folder of
+files doesn't have on its own:
 
-The core engine (schema management, a full read/insert/update/delete query language, single- and multi-field key
-support, and referential integrity) is implemented and tested. Still open, tracked for whenever they're actually
-needed: multi-field *foreign* keys specifically (single-field ones work; composite primary/unique/index keys work
-too), and CASCADE/SET NULL modes for referential integrity (deleting/updating a referenced record is RESTRICTed -
-blocked outright - rather than cascading or nulling out the dependents; see `configure()` below to turn that
-enforcement off entirely if it doesn't fit your workflow).
+- **A schema**: field types, required and nullable fields, defaults.
+- **Keys enforced**: primary, unique and foreign keys, checked on every write (a delete that would leave a dangling
+  reference is refused).
+- **A SQL-like query language**: `read workouts where date = '2024-06-02' sort reps desc`, with joins, `group by`,
+  `alter`, multi-row inserts, and statements that change nothing if any row fails.
+- **Reads straight from static hosting**: in a browser it reads the files over `fetch()` (GitHub Pages, Netlify, any
+  CDN), so a site can query its data with no database server. Writes run in Node: a script or a build step.
+
+## When to use it, and when not to
+
+It suits data that's written by you (or your build) and read by your visitors: a portfolio's projects, a blog's
+posts, a quiz bank, a workout log, a small catalogue. Small to medium size: hundreds to about ten thousand rows a
+record. Data you want to see change in `git diff`, and ship without running anything server-side.
+
+Use SQLite, or a real database server, instead when:
+
+- **Visitors write data.** Writes need file system access, so a browser can only read. Something has to run a server
+  to accept writes.
+- **Several programs write at once.** Calls are queued within one Node process; two processes writing one folder
+  aren't protected from each other.
+- **The data is big.** Each row is a file, and a read loads the rows it needs into memory. The benchmarks go up to
+  10,000 rows; once the files stop being something you'd read in a diff, SQLite will be faster and smaller.
+- **You need what isn't here yet**: transactions across several statements, aggregates (`count`, `sum`), outer joins,
+  date and decimal field types, multi-field foreign keys, and `cascade` / `set null` on delete (a referenced row can't
+  be deleted while rows point at it, or checks can be turned off with `configure()`). These are planned, not built.
+
+## How fast
+
+At 1,000 rows (a table of 100 parents and one of 1,000 children with a foreign key and an index), before the
+performance work (3.1.4) and now. `BENCHMARKS.md` has every run and what each one measures.
+
+| Operation, 1,000 rows | 3.1.4 | Now |
+|---|---:|---:|
+| Insert 1,000 rows, one `insert` each | 6.5 min | 5.7 s |
+| Insert 1,000 rows in one `insert` | - | 0.43 s |
+| Read every row | 376 ms | 151 ms |
+| Indexed `where` | 7.8 ms | 4.2 ms |
+| One join | 5.2 s | 176 ms |
+| Two joins | 5.6 s | 177 ms |
+| Update one row by key | 402 ms | 157 ms |
+| Delete one row by key | 784 ms | 156 ms |
+| Browser: read every row | 4.3 s | 689 ms, packed 11 ms |
+| Browser: one join | 15.2 s | 732 ms, packed 20 ms |
+| Browser: two joins | 26.1 s | 744 ms, packed 33 ms |
+| Size of the data | 438 KB | 359 KB |
+
+The browser rows are read from a local server; over a real network each request costs more, which is what packed
+tables (see In the browser) are for: one request per record instead of one per row.
+
+## A static site, end to end
+
+A Node script owns the data: it creates the records once and adds rows whenever there are new ones.
+
+```js
+// scripts/add-posts.js
+const { configure, query, packDatabase } = require('json-fs-query')
+
+configure({ databasePath: 'site/database/' })
+
+await query(`create if not exists authors (_id string auto, name string, primary key (_id));
+  create if not exists posts (_id string auto, author_id string, title string, published string,
+    primary key (_id), index (published), foreign key (author_id) references authors (_id))`)
+
+const [[author]] = await query("insert authors values name = 'Joshua'")
+await query(`insert posts values
+  (author_id = '${author._id}', title = 'First post', published = '2026-11-01'),
+  (author_id = '${author._id}', title = 'Second post', published = '2026-11-08')`)
+
+await packDatabase()   // one file per record, for the browser
+```
+
+Commit `site/database/` and deploy `site/` as usual. The page reads it with no server of its own:
+
+```html
+<script src="https://unpkg.com/json-fs-query"></script>
+<script>
+  jsonFsQuery.configure({ databasePath: 'database/' })
+  jsonFsQuery.query("read posts merge posts.author_id with authors._id sort published desc limit 10")
+    .then(([posts]) => console.log(posts))   // each post with its author's name as "authors.name"
+</script>
+```
+
+New posts go in the same way (an `insert`, or a JSON file edited by hand), then `packDatabase()`, commit and deploy. A
+test that calls `checkPacked()` (see Packed tables) catches a forgotten `packDatabase()`.
 
 ## Install
 
@@ -45,13 +124,21 @@ JSON can leave a key out or store it as `null`:
 | Definition | Left out | `null` |
 |---|---|---|
 | `{ name: 'note', type: 'string' }` | error | error |
-| `{ name: 'note', type: 'string', optional: true }` | allowed | error |
+| `{ name: 'note', type: 'string', optional: true }` | allowed | same as left out |
 | `{ name: 'note', type: 'string', nullable: true }` | error | stored as `null` |
 | `{ name: 'note', type: 'string', optional: true, nullable: true }` | allowed | stored as `null` |
 
+An optional field that isn't nullable can never hold `null`, so a `null` given for it means "no value": `insert ...
+note = null` stores the row without `note` (a default fills it in, as for a field left out), and `update ... set
+note = null` removes `note` from the rows it changes, which is how an optional field is cleared (not a field of the
+primary key: rows are found by it). As in SQL, a default only fills in a field when a row is inserted, so clearing a
+field with a default leaves it out rather than setting the default. Nullable fields store `null`, and required fields
+that aren't nullable reject it.
+
 `useDefault: true, defaultValue: …` fills in a field that is left out. `create()` checks the default against the
 field's type (a `null` default needs `nullable: true`) and throws if it doesn't fit. Primary key fields can't be
-nullable. As in SQL, a `null` is never a duplicate in a unique key (any number of rows can hold it), and
+nullable, or optional unless they're `auto` (a row has to have its key: its file is named by it). Each key needs a non-empty `fields` list naming defined fields, and unknown key properties are rejected.
+As in SQL, a `null` is never a duplicate in a unique key (any number of rows can hold it), and
 a `null` foreign key isn't checked against the record it references.
 
 ## Writing queries
@@ -67,6 +154,29 @@ The `;` after the last (or only) query is optional. A `;` inside a string, a com
 Keywords (`where`, `and`, `sort`, `limit`, `create`, `show records`...), command words (`read`, `insert`, `update`,
 `delete`), sort directions (`asc`, `desc`) and comparators can be written in any case: `READ t` and `sort a ASC` work.
 Record and field names are case-sensitive.
+
+Every record and field a query names must exist, as in SQL. A field means the queried record's own unless it's written
+`<record>.<field>`, and it has to be one that record defines (it doesn't have to be stored in every row: an optional
+field is fine). Otherwise the query fails before reading or writing anything, naming what's wrong and what's there:
+`Record "workout" doesn't exist`, or `Unknown field "rep" in where: workouts has _id, exercise_id, date, reps`. In
+`select`, the joined record's name stands for its rows, `<record>.<field>` picks the queried record's own field (named
+as written: use `as` to rename it) or a merged record's, and a joined record's single field is an error, since its rows
+are a list (merge it to put its fields on each row).
+
+### Inserting several rows
+
+One `insert` can add many rows: put each row's values in brackets, separated by commas.
+
+```sql
+insert workouts values (reps = 10, date = '2024-06-02'), (reps = 12, date = '2024-06-03'), (reps = 8, date = '2024-06-04')
+```
+
+It resolves to the inserted rows, in order. Each row is checked against the rows already stored and the rows before it
+in the statement (so two rows with the same primary or unique key fail, and a row's foreign key can point at a row
+earlier in the same insert). The statement is all or nothing: if any row fails, none is written. Every index is read once
+and the record file and each index are written once, so this is far faster than one `insert` per row: 1,000 rows take
+about half a second, against about 7 seconds one at a time (see `BENCHMARKS.md`). One row without brackets
+(`insert workouts values reps = 10, date = '2024-06-02'`) works as before.
 
 ### Strings
 
@@ -347,7 +457,7 @@ A field is `<name> <type>`, then any of these, in any order:
 |---|---|
 | `optional` | may be left out (see "Fields" above) |
 | `null` / `not null` | may hold `null` / may not (the default) |
-| `auto` | a UUID is generated on insert; the type must be `string` |
+| `auto` | a UUID is generated on insert for a row that leaves the field out (or gives `null`); a value given for it is kept, as MySQL keeps an explicit `AUTO_INCREMENT` value, and still has to be unique when the field is a key. The type must be `string` |
 | `default <value>` | used when the field is left out: a string, a number, an array, `null`, `true` or `false` (so an `object` field can only default to `null` here; `create()` takes any default) |
 
 The types are `string`, `int`, `boolean`, `object` and `array`; any other is an error.
@@ -378,6 +488,32 @@ show records;                    -- the name of every record, in the order they 
 it, that is an error. A record that another record's foreign key references can't be dropped until that one is
 (unless `enforceForeignKeys` is turned off, see Configuration). `describe` resolves to `{ path, definition, keys }`
 (the `describe()` function gives only the fields), and `show records` to an array of names.
+
+### Changing a record's fields: `alter`
+
+```sql
+alter workouts add note string optional                -- a new field (written as in create)
+alter workouts add status string default 'planned'     -- existing rows get the default
+alter workouts drop note                               -- removed from the definition and every row
+alter workouts rename date to day                      -- in every row, its keys and indexes, and foreign keys to it
+alter workouts modify status string optional default 'planned'  -- the field's whole new definition
+```
+
+Each `alter` makes one change, all or nothing (several, separated by `;`, run in turn), and resolves to the record's
+new fields. The `alter()` function takes the same changes as objects, e.g.
+`alter('workouts', { action: 'add', field: { name: 'note', type: 'string', optional: true } })`.
+
+- **add**: existing rows get the field's default, or a new id for an `auto` field. A required field with neither is
+  refused while the record has rows (they'd be missing it): give it a default, or make it optional.
+- **drop**: refused while a key of the record uses the field, or another record's foreign key references it.
+- **rename**: a key's index file named after the field moves to the new name; foreign keys that reference the field
+  (in any record) are renamed with it.
+- **modify**: gives the field's whole new definition, as MySQL's `MODIFY` does: anything it leaves out is cleared, so
+  repeat a default to keep it (`modify status string optional` removes `default 'planned'`, as leaving out `optional`
+  makes the field required). The type, and whether the field is `auto`, can't change (that's for a later version).
+  Making it required fills rows that are missing it from the new default, and is refused without one; making it not
+  nullable removes the `null`s when it stays optional, and otherwise fills them from the default. When a key uses the
+  field, filled rows go through the same checks as an `update` (a unique key refuses the same default twice).
 
 ### Reading a query over several lines: `queryStatus()`
 
@@ -443,6 +579,24 @@ Queries that worked in 2.x can be errors now (each error names the problem), and
   `Missing a whole number after limit: x`. In 2.x these were `Unrecognized query value: ...`. Check any code that
   matches on that message.
 
+### Upgrading from 3.2
+
+- A field a record doesn't define is an error everywhere a query names one. In 3.2 `insert` dropped it without a word,
+  `update ... set` stored it outside the record's definition, and `where`, `sort`, `group by`, `select`, `on` and
+  `merge` quietly matched nothing (or left rows unsorted). A field that's only missing from some rows is fine, as long
+  as the record defines it.
+- `select <record>.<field>` for the queried record picks its field; in 3.2 it gave nothing. For a joined record
+  without `merge`, it's an error saying to select the record (its rows) or merge it.
+- A record that doesn't exist is `Record "<name>" doesn't exist` (in a browser, `... doesn't exist, or <name>.json
+  can't be read`), as `drop` and `describe` already said, instead of `Could not read <name>.json`. A join written
+  without the record to join (`read workouts on ...`) says so, instead of `Could not read .json`.
+
+### Upgrading from 3.3
+
+- An `auto` field keeps a value given for it on insert. Before 3.3.1, `insert foo values _id = 'mine', ...` stored the row
+  under a new UUID without a word, so copying rows with their ids (or migrating data whose other records point at those
+  ids) lost them. A row that leaves the field out, or gives `null`, still gets a new UUID.
+
 ## Configuration
 
 `configure()` sets where this package's data lives and how strictly it enforces foreign keys - call it once,
@@ -454,19 +608,84 @@ const { configure } = require('json-fs-query')
 configure({
   databasePath: 'database/',   // where the JSON files live (default 'database/')
   relativePath: '',            // URL prefix prepended to databasePath when reading via fetch() in a browser
-  enforceForeignKeys: true     // RESTRICT delete/update of a record other entities still reference (default true)
+  enforceForeignKeys: true,    // RESTRICT delete/update of a record other entities still reference (default true)
+  readConcurrency: 16,         // how many entry files a read has in flight at once (default 16)
+  format: 'compact',           // how files are written: 'compact' or 'pretty' (default 'compact')
+  packedReads: undefined,      // use packed files (see packDatabase); default true in a browser, false in Node
+  databasesPath: undefined,    // a folder holding several databases (see Several databases)
+  database: undefined,         // the one of them in use
+  fetchOptions: undefined      // passed to every fetch() in a browser, such as { cache: 'no-cache' }
 })
 ```
 
 Turning `enforceForeignKeys` off restores the pre-1.0 behavior (no referential integrity checks at all) - useful if
 it doesn't fit a particular workflow, mirroring MySQL's own toggleable `foreign_key_checks`.
 
+Reads fetch several entry files at once, `readConcurrency` at a time, and keep the record's order. In a browser each
+file is one request: 16 suits HTTP/2 static hosts (such as GitHub Pages), while over HTTP/1.1 a browser only opens about
+6 connections per host anyway. `readConcurrency: 1` reads one file at a time, as every read did before this setting.
+
+`fetchOptions` is given to every `fetch()` a browser read makes, as its second argument. By default reads use the
+browser's normal HTTP cache, which suits data that only changes when the site is deployed. When something writes the
+files while the page is in use (a local server, say), `{ cache: 'no-cache' }` makes the browser check every file with the
+server before using its cached copy: an unchanged file comes back as a short "not modified", a changed one is read again.
+
+### Several databases: `databasesPath`, `use`
+
+One program can keep several databases (say, real data and a test copy) in one folder and switch between them:
+
+```js
+configure({ databasesPath: 'databases/', database: 'real' })   // databases/real/ is the one in use
+```
+
+```sql
+create database copy;             -- a new, empty databases/copy/ (it doesn't switch to it)
+use copy;                         -- the rest of this query, and the calls after it, use databases/copy/
+show databases;                   -- ['real', 'copy'], in the order they were created
+drop database if exists copy;     -- deletes it and everything in it (not the one in use: use another first)
+```
+
+`use` does what `configure({ database })` does, and both work in a browser (reading only), for any database listed in
+`databases/__DATABASES.json`, the list `create database` and `drop database` keep (a browser can't list a folder).
+With `databasesPath` set, calls on all its databases queue together (see Several calls at once), so a `use` part way
+through a call is safe. A browser runs calls side by side instead, with one database in use for the page, so there
+`use` refuses while another call is running: await it, or switch with `configure({ database })` between calls. A
+database folder copied in by hand (to copy a database) isn't listed yet: `create database if not exists <name>` lists
+it. Without `databasesPath`, `databasePath` names the one database, as before. A record can still be called
+`database`: `create database (...)` and a bare `drop database` act on that record.
+
+### File format: `format` and `formatDatabase()`
+
+Files are written as compact JSON by default: about a fifth smaller than indented JSON, and an editor shows them
+formatted anyway. `format: 'pretty'` writes them indented by 2 spaces instead, for reading data in diffs (for example in
+pull requests). Either format is always read, so a database can hold both: one written before this setting keeps its
+indented files until they change.
+
+`formatDatabase()` rewrites a whole database in one format (the configured one by default), leaving files already in
+it alone, and resolves to how many JSON files it found and rewrote:
+
+```js
+const { configure, formatDatabase } = require('json-fs-query')
+
+configure({ databasePath: 'database/', format: 'pretty' })
+await formatDatabase()           // { files: 1119, rewritten: 1119 }
+await formatDatabase('compact')  // back to compact, whatever the setting
+```
+
+It reads and checks every file before writing any: one that isn't valid JSON fails the call with its path and nothing
+is changed. Node only, like every write.
+
+**Upgrading a database kept in git:** before this setting every file was written indented, so after upgrading each
+file turns compact the next time it changes, and diffs mix both. Either run `formatDatabase('compact')` once and commit
+the result on its own, or set `format: 'pretty'` to keep writing indented files.
+
 ## Several calls at once
 
-Calls to `query()`, `create()`, `drop()` and `describe()` on one database (one `databasePath`) run one at a time, in
-the order they were made, so concurrent requests (for example in a web server) can't overwrite each other's
-changes. All the queries in one `query()` string run together, with no other call in between. This covers one Node
-process: two processes writing to the same folder (say a server and a CLI) are not protected from each other.
+Calls to `query()`, `create()`, `drop()`, `describe()`, `formatDatabase()`, `packDatabase()` and `checkPacked()` on
+one database (one `databasePath`) run one at a time, in the order they were made, so concurrent requests (for
+example in a web server) can't overwrite each other's changes. All the queries in one `query()` string run together,
+with no other call in between. This covers one Node process: two processes writing to the same folder (say a server
+and a CLI) are not protected from each other.
 
 `configure()` can't point `databasePath` at another folder while calls are still running or queued (it throws:
 await them first), since each call reads the setting again at every step. The same folder written another way
@@ -490,18 +709,54 @@ Reads work in the browser via `fetch()` - `create`/`drop`, and any write through
 `delete`), need real filesystem access and only work in Node. They're still present in the browser build (same
 public API either way), but throw if actually called there, rather than being silently unavailable.
 
+### Packed tables: one request per record
+
+Read over `fetch()`, every entry file is one request, so reading 1,000 rows is 1,000 requests. `packDatabase()` writes
+each record's rows into one file, `__packed/<record>.json`, and a browser then reads the whole record in one request:
+at 1,000 rows a full read takes about 25 ms instead of 1 s (see `BENCHMARKS.md`). Run it in Node as a build step
+whenever the data changes, and serve (or commit) the `__packed/` folder with the rest of the database:
+
+```js
+const { configure, packDatabase, checkPacked } = require('json-fs-query')
+
+configure({ databasePath: 'database/' })
+await packDatabase()   // { records: 4, rows: 1452 }
+await checkPacked()    // { stale: [], orphaned: [] } - in a test, to catch a forgotten packDatabase()
+```
+
+The entry files stay the copy that's edited and reviewed; a packed file is only ever a copy of them:
+
+- Any `insert`, `update`, `delete` or `drop` through json-fs-query removes that record's packed file in the same
+  statement (a statement that changes no rows leaves it), so a browser never reads a packed file in place of a change.
+- A packed file is only used while its entries match the record file, so rows added or removed without json-fs-query
+  fall back to the entry files.
+- A row edited by hand keeps the same entries, so its packed file still looks current and a browser reads the old
+  row: run `packDatabase()` after hand edits, and run `checkPacked()` in CI (or a test) so a forgotten one fails the
+  build. It reports packed files that don't match their entry files (`stale`), and packed files of records that no
+  longer exist (`orphaned`, which `packDatabase()` removes).
+
+A packed file is only read when a read needs more rows than one round of requests (`readConcurrency`, 16 by default).
+A lookup of a few rows (an indexed `where` on a key, say) reads the index and those rows as before, so it never
+downloads a whole record, and a record of 16 rows or fewer is never asked for a packed file. Indexes stay in their own
+files. A larger record without a packed file costs one extra request that comes back as not found, before its entry
+files are read as before.
+
+Browsers use packed files by default and Node doesn't (it reads the entry files, which are always current). Change it
+with `configure({ packedReads: true })` or `false`.
+
 ## Documentation
 
-The reference for every function is in [`docs/`](https://joshuaheagle.com/projects/json-file-db/docs/index.html) (or open `docs/index.html` locally). It is generated from the TypeScript source, and each module is a folder of `src/data/`:
+The reference for every function is in [`docs/`](https://joshuaheagle.com/projects/json-fs-query/docs/index.html) (or open `docs/index.html` locally). It is generated from the TypeScript source, and each module is a folder of `src/data/`:
 
 | Module | What it holds |
 | --- | --- |
 | `introspect` | Create, drop and describe a JSON-file "table" (and the policies that validate one) |
 | `queries` | Parse a query string and run it - reads, inserts, updates, deletes, joins, `where`, `sortBy`, `groupBy` |
+| `storage` | Every file read, write, delete and listing (disk in Node, `fetch()` in a browser), the per-call cache and write set |
 | `utilities` | Shared helpers the queries use - retrieving records/files/indexes and merging join results |
 
 `src/index.ts` is the package's public entry point - it re-exports `query`, `quote`, `queryStatus`, `create`, `drop`,
-`describe`, `configure`, and the schema-definition types (`fieldProperties`, `keyProperties`, etc.) needed to build a `create()` call. Everything else
+`alter`, `describe`, `formatDatabase`, `packDatabase`, `checkPacked`, `configure`, and the schema-definition types (`fieldProperties`, `keyProperties`, etc.) needed to build a `create()` call. Everything else
 under `src/data/` is an internal module, reachable but not part of the supported public API.
 
 ## Development

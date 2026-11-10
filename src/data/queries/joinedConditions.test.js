@@ -5,6 +5,7 @@ import { getConditionIndexedList } from '../utilities/getConditionIndexedList'
 import { setUp } from 'test-filesystem'
 import { configure } from '../utilities/config'
 import { copyDatabase } from '../../../test-data/copyDatabase'
+import fs from 'fs'
 
 const databasePath = 'joined-conditions-database/'
 configure({ databasePath })
@@ -62,6 +63,11 @@ describe('conditions on a joined entity\'s fields: an inner join, evaluated per 
   })
 
   test('a missing joined field is unknown, as on the row itself (no exercise has a `level` field)', async () => {
+    // level is defined (optional), but no exercise has one: a field the record didn't define would be an error
+    const recordFile = `${databasePath}exercises.json`
+    const record = JSON.parse(fs.readFileSync(recordFile, 'utf8'))
+    record.definition.push({ name: 'level', type: 'string', optional: true })
+    fs.writeFileSync(recordFile, JSON.stringify(record))
     const ids = async (text) => (await pairs(text, 'exercises')).map(([id]) => id)
     expect(await ids(`${workoutsJoin} where exercises.level = 'x'`)).toEqual([])
     // not unknown is unknown: still nothing

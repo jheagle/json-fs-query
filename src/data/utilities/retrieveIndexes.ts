@@ -10,7 +10,11 @@ export const retrieveIndexes = async (entity = '', properties = [], recordData =
   for (const property of properties) {
     for (const key of recordData[entity].keys) {
       if (isSingleFieldKey(key, property)) {
-        indexSet[property] = await retrieveFile(`__indexes/${entity}/${key.lookup}`)
+        // A record with no entries has nothing indexed: read it as an empty index rather than asking for a file that
+        // databases made before create() wrote empty indexes never got
+        indexSet[property] = (recordData[entity].entries || []).length
+          ? await retrieveFile(`__indexes/${entity}/${key.lookup}`)
+          : []
       }
     }
   }

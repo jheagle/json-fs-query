@@ -31,7 +31,7 @@ export const compareAs = (type: string | undefined, value: any): any => {
   }
 }
 
-const comparableTypes = ['string', 'int', 'boolean']
+export const comparableTypes = ['string', 'int', 'boolean']
 
 /**
  * Whether two values are equal for a field of the given declared type: both are normalized to

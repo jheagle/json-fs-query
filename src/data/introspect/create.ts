@@ -2,18 +2,38 @@ import { record, recordDefinition } from './definitions/record'
 import { keyProperties } from './definitions/key'
 import { fieldProperties } from './definitions/field'
 import { registerRecord } from '../utilities/registerRecord'
-import { getSetting } from '../utilities/config'
+import { fileExists, makeDirectory, writeJson } from '../storage'
+import { requireNode } from '../utilities/requireNode'
 import { typeCheck } from './policies/typeCheck'
+
+const knownKeyProperties = ['type', 'fields', 'lookup', 'references']
+
+/**
+ * Reject a key with a property key() would ignore (a typo such as `keys` for `fields`), which has to be
+ * checked on the keys as given, before key() drops it.
+ * @param recordName
+ * @param keys
+ */
+const assertKnownKeyProperties = (recordName: string, keys: keyProperties[]): void => {
+  for (const key of keys) {
+    for (const property of Object.keys(key)) {
+      if (!knownKeyProperties.includes(property)) {
+        throw new Error(`Unknown property "${property}" on ${key.type ?? 'index'} key of ${recordName}; must be ${knownKeyProperties.join(', ')}`)
+      }
+    }
+  }
+}
 
 /**
  * Reject a definition that could never be written correctly, before anything is created: a
  * default that fails its field's type check (otherwise every insert leaving that field out would
  * fail instead), including a null default on a field that isn't nullable, and a nullable field in
- * the primary key (an entry's file name comes from its primary key value).
+ * the primary key (an entry's file name comes from its primary key value). Also a key with no fields,
+ * or with a field that isn't in the definition.
  * @param recordName
  * @param recordContent
  */
-const assertValidDefinition = (recordName: string, recordContent: recordDefinition): void => {
+export const assertValidDefinition = (recordName: string, recordContent: recordDefinition): void => {
   for (const field of recordContent.definition) {
     if (!Object.prototype.hasOwnProperty.call(field, 'default')) {
       continue
@@ -24,10 +44,25 @@ const assertValidDefinition = (recordName: string, recordContent: recordDefiniti
       throw new Error(`Invalid default for field "${field.name}" of ${recordName}: ${(err as Error).message}`)
     }
   }
+  for (const key of recordContent.keys) {
+    if (key.fields.length < 1) {
+      throw new Error(`The ${key.type} key of ${recordName} must have at least one field`)
+    }
+    for (const fieldName of key.fields) {
+      if (!recordContent.definition.some(field => field.name === fieldName)) {
+        throw new Error(`The ${key.type} key of ${recordName} names field "${fieldName}", which isn't in the definition`)
+      }
+    }
+  }
   const primaryKey = recordContent.keys.find(key => key.type === 'primary')
   for (const fieldName of primaryKey ? primaryKey.fields : []) {
-    if (recordContent.definition.some(field => field.name === fieldName && field.nullable)) {
+    const field = recordContent.definition.find(defined => defined.name === fieldName)
+    if (field && field.nullable) {
       throw new Error(`Primary key field "${fieldName}" of ${recordName} can't be nullable`)
+    }
+    // A row without its primary key can't be stored (its file is named by it): an auto field always gets a value
+    if (field && field.optional && !field.autoGenerate) {
+      throw new Error(`Primary key field "${fieldName}" of ${recordName} can't be optional`)
     }
   }
 }
@@ -39,20 +74,28 @@ const assertValidDefinition = (recordName: string, recordContent: recordDefiniti
  * @param keys
  */
 export const create = async (recordName: string, definition: fieldProperties[] = [], keys: keyProperties[] = []): Promise<recordDefinition | null> => {
-  const { writeFile, mkdir } = require('fs/promises')
-  const { existsSync } = require('fs')
-  const databasePath = getSetting('databasePath', 'database/')
+  requireNode('create()')
   if (recordName === '__RECORDS') {
     return null
   }
-  if (existsSync(`${databasePath}${recordName}.json`)) {
+  if (fileExists(`${recordName}.json`)) {
     return null
   }
+  assertKnownKeyProperties(recordName, keys)
   const recordContent = record({ path: recordName, definition, keys })
   assertValidDefinition(recordName, recordContent)
-  await mkdir(databasePath, { recursive: true })
-  await writeFile(`${databasePath}${recordName}.json`, JSON.stringify(recordContent, null, 2))
-  await mkdir(`${databasePath}${recordName}`, { recursive: true })
+  await makeDirectory()
+  await writeJson(`${recordName}.json`, recordContent)
+  await makeDirectory(recordName)
+  // Each indexed key starts with an empty index, so the new record reads like any other before its first insert
+  // (a where on a key used to fail with "Could not read __indexes/...", since the file only appeared with the first row)
+  const indexedKeys = recordContent.keys.filter(key => key.lookup)
+  if (indexedKeys.length) {
+    await makeDirectory(`__indexes/${recordName}`)
+    for (const key of indexedKeys) {
+      await writeJson(`__indexes/${recordName}/${key.lookup}`, [])
+    }
+  }
   await registerRecord(recordName)
   return recordContent
 }

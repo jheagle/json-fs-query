@@ -1,7 +1,7 @@
 {
   "name": "json-fs-query",
-  "version": "3.0.0",
-  "description": "Use json files to manage and read data.",
+  "version": "3.4.0",
+  "description": "A git-native JSON data store for static sites: JSON files with a schema, enforced keys and a SQL-like query language, read straight from static hosting.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "unpkg": "browser/jsonFsQuery.min.js",
@@ -24,7 +24,8 @@
     "watch": "gulp watchFull",
     "watch:test": "gulp watchTest",
     "lint": "gulp lint",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "benchmark": "node scripts/benchmark.cjs"
   },
   "bin": {
     "json-fs-query": "dist/cli/index.js",
@@ -32,24 +33,30 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jheagle/json-file-db.git"
+    "url": "git+https://github.com/jheagle/json-fs-query.git"
   },
   "keywords": [
     "database",
     "filesystem",
     "json",
-    "data"
+    "data",
+    "static-site",
+    "git",
+    "query",
+    "sql"
   ],
   "author": "Joshua Heagle <joshuaheagle@gmail.com>",
   "license": "GPL-3.0-or-later",
   "bugs": {
-    "url": "https://github.com/jheagle/json-file-db/issues"
+    "url": "https://github.com/jheagle/json-fs-query/issues"
   },
-  "homepage": "https://github.com/jheagle/json-file-db#readme",
+  "homepage": "https://github.com/jheagle/json-fs-query#readme",
   "devDependencies": {
+    "@babel/core": "^8.1.0",
     "@types/node": "^26.6.5",
     "gulp": "^5.0.1",
-    "js-build-tools": "^6.6.0",
+    "js-build-tools": "^8.2.0",
+    "playwright": "^1.65.0",
     "release-it": "^21.1.1",
     "test-filesystem": "^2.0.2",
     "typedoc": "^0.28.20"
@@ -57,7 +64,7 @@
   "dependencies": {
     "browser-or-node": "^3.0.0",
     "core-js": "^3.51.0",
-    "si-funciona": "^2.8.0"
+    "si-funciona": "^2.10.0"
   },
   "standard": {
     "env": [
@@ -68,6 +75,7 @@
     "core-js": false,
     "core-js-pure": false,
     "@parcel/watcher": false,
-    "unrs-resolver": false
+    "unrs-resolver": false,
+    "esbuild": false
   }
 }

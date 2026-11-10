@@ -17,7 +17,7 @@ describe('retrieveFile (browser)', () => {
     configure({ databasePath: 'my-data/', relativePath: 'http://example.com/' })
     const recordContent = { path: 'foo', definition: [], keys: [], entries: [] }
     global.fetch = jest.fn().mockResolvedValue({
-      json: () => Promise.resolve(recordContent)
+      text: () => Promise.resolve(JSON.stringify(recordContent))
     })
 
     const result = await retrieveFile('foo.json')

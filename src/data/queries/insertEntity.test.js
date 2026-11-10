@@ -2,8 +2,9 @@ import { create } from '../introspect/create'
 import { insertEntity } from './insertEntity'
 import { fileExists, setUp } from 'test-filesystem'
 import { configure } from '../utilities/config'
+import { query } from './query'
 
-const { readFile } = require('fs/promises')
+const { readFile, rm } = require('fs/promises')
 
 const databasePath = 'insert-entity-database/'
 configure({ databasePath })
@@ -23,6 +24,34 @@ const keys = [
 ]
 
 describe('insertEntity', () => {
+  test('an auto field keeps a value given for it, as MySQL keeps an explicit AUTO_INCREMENT value', async () => {
+    await create('foo', definition, keys)
+    const [rows] = await query("insert foo values (_id = 'given', bar = 'a'), (bar = 'b'), (_id = null, bar = 'c')")
+    expect(rows[0]._id).toBe('given')
+    expect(rows[1]._id).toMatch(/^[0-9a-f-]{36}$/)
+    expect(rows[2]._id).toMatch(/^[0-9a-f-]{36}$/)
+    expect(JSON.parse(await readFile(`${databasePath}foo/given.json`, 'utf8'))).toEqual({ _id: 'given', bar: 'a' })
+    const [[found]] = await query("read foo where _id = 'given'")
+    expect(found.bar).toBe('a')
+  })
+
+  test('a given auto value is still checked against its key: a duplicate is refused and nothing is written', async () => {
+    await create('foo', definition, keys)
+    await query("insert foo values _id = 'taken', bar = 'first'")
+    await expect(query("insert foo values _id = 'taken', bar = 'second'")).rejects.toThrow('Duplicate value for primary key "_id" on foo')
+    await expect(query("insert foo values (_id = 'twice', bar = 'a'), (_id = 'twice', bar = 'b')")).rejects.toThrow('Duplicate value for primary key "_id" on foo')
+    const [rows] = await query('read foo')
+    expect(rows.map(row => row._id)).toEqual(['taken'])
+  })
+
+  test('rows keep the ids they were given, so foreign keys to them work (copying or migrating data)', async () => {
+    await create('foo', definition, keys)
+    await query('create links (_id string auto, foo_id string, primary key (_id), foreign key (foo_id) references foo (_id))')
+    await query("insert foo values (_id = '1', bar = 'one'), (_id = '2', bar = 'two')")
+    const [links] = await query("insert links values (foo_id = '1'), (foo_id = '2')")
+    expect(links.map(link => link.foo_id)).toEqual(['1', '2'])
+  })
+
   test('inserts a new entity, generating its primary key', async () => {
     await create('foo', definition, keys)
     const dataSet = await insertEntity('foo', [{ bar: 'baz' }], {})
@@ -41,6 +70,17 @@ describe('insertEntity', () => {
 
     const indexFile = JSON.parse(await readFile(`${databasePath}__indexes/foo/pk__id.json`, 'utf8'))
     expect(indexFile).toEqual([{ value: inserted._id, record: [`${inserted._id}.json`] }])
+  })
+
+  test('creates the record\'s folder when it is missing, as in a fresh git clone of an empty database', async () => {
+    await create('foo', definition, keys)
+    // git doesn't keep empty folders: a committed database with no entries comes back without foo/
+    await rm(`${databasePath}foo`, { recursive: true })
+    expect(await fileExists(`${databasePath}foo`)).toBe(false)
+
+    const dataSet = await insertEntity('foo', [{ bar: 'baz' }], {})
+    const fileName = `${dataSet.foo[0]._id}.json`
+    expect(JSON.parse(await readFile(`${databasePath}foo/${fileName}`, 'utf8'))).toEqual(dataSet.foo[0])
   })
 
   test('inserts multiple entities from one call', async () => {
@@ -146,7 +186,8 @@ describe('insertEntity', () => {
       const compositePrimaryKeys = [
         { type: 'primary', fields: ['a', 'b'], lookup: 'pk_a_b.json' }
       ]
-      await create('foo', multiDefinition, compositePrimaryKeys)
+      // Every field of a primary key is required (create() refuses an optional one)
+      await create('foo', multiDefinition.map(field => ({ ...field, optional: false })), compositePrimaryKeys)
       const inserted = await insertEntity('foo', [{ a: 'x', b: 'y' }], {})
       expect(inserted.foo[0].a).toBe('x')
       expect(inserted.foo[0].b).toBe('y')
@@ -269,9 +310,18 @@ describe('insertEntity', () => {
       expect(entryFile).toHaveProperty('note', null)
     })
 
-    test('rejects null in a field that is not nullable, instead of storing it as 0 or "null"', async () => {
+    test('a null in an optional field that is not nullable is left out, never stored as null, 0 or "null"', async () => {
       await create('foo', nullableDefinition, keys)
-      await expect(insertEntity('foo', [{ reps: null }], {}))
+      const dataSet = await insertEntity('foo', [{ reps: null }], {})
+      const inserted = dataSet.foo[0]
+      expect(inserted).not.toHaveProperty('reps')
+      const entryFile = JSON.parse(await readFile(`${databasePath}foo/${inserted._id}.json`, 'utf8'))
+      expect(entryFile).not.toHaveProperty('reps')
+    })
+
+    test('rejects null in a required field that is not nullable', async () => {
+      await create('foo', [...nullableDefinition, { name: 'sets', type: 'int', optional: false }], keys)
+      await expect(insertEntity('foo', [{ sets: null }], {}))
         .rejects.toThrow('Value "null" is not allowed: the field is not nullable')
       const recordFile = JSON.parse(await readFile(`${databasePath}foo.json`, 'utf8'))
       expect(recordFile.entries).toEqual([])

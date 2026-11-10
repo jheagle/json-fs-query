@@ -7,8 +7,9 @@ import { hasDependents } from '../introspect/policies/hasDependents'
 import { recordDefinition } from '../introspect/definitions/record'
 import { keyDefinition } from '../introspect/definitions/key'
 import { getSetting } from '../utilities/config'
-
-const { rm, writeFile } = require('fs/promises')
+import { keyIndexFiles } from '../utilities/keyIndexFiles'
+import { removeFile, writeJson } from '../storage'
+import { discardPacked } from '../utilities/packedTable'
 
 /**
  * RESTRICT: reject the whole delete (before removing anything) if any row being deleted is still
@@ -33,33 +34,46 @@ const assertNoDependents = async (entity: string, primaryKey: keyDefinition, toD
 
 /**
  * A record object carries no memory of which entry file it was read from, and files are not
- * guaranteed to be named after any field's value, so the only reliable way to find a record's
- * file is to re-scan every entry and match it by its primary key value(s) - a single field, or a
- * composite of several for a multi-field primary key.
+ * guaranteed to be named after any field's value, so a deleted row's file is found by its primary
+ * key value(s) - a single field, or a composite of several for a multi-field primary key. The
+ * primary key's index says which files those are (each is read to confirm it); any deleted value
+ * the index didn't lead to, or a record without one, is found by looking at every entry, as before.
+ * Inserts and updates keep primary key values unique, so each value is one row: only a database
+ * edited by hand into two rows of one value, with an index listing just one, would keep the other
+ * (looking at every entry used to delete both).
  * @param entity
  * @param record
  * @param primaryKey
  * @param deletedValues
  */
 const removeMatchingEntries = async (entity: string, record: recordDefinition, primaryKey: keyDefinition, deletedValues: Set<any>): Promise<string[]> => {
-  const databasePath = getSetting('databasePath', 'database/')
-  const remainingEntries = []
-  for (const fileName of record.entries) {
+  const removed = new Set<string>()
+  const found = new Set<any>()
+  const removeIfDeleted = async (fileName: string): Promise<void> => {
     const data = await retrieveFile(`${record.path}/${fileName}`)
-    if (!deletedValues.has(computeKeyValue(primaryKey.fields, data))) {
-      remainingEntries.push(fileName)
-      continue
+    const value = computeKeyValue(primaryKey.fields, data)
+    if (!deletedValues.has(value)) {
+      return
     }
-    await rm(`${databasePath}${record.path}/${fileName}`)
+    await removeFile(`${record.path}/${fileName}`)
     for (const key of record.keys) {
       await removeFromIndex(record.path, key, computeKeyValue(key.fields, data), fileName, keyValueType(record, key))
     }
+    removed.add(fileName)
+    found.add(value)
   }
-  return remainingEntries
+  for (const fileName of await keyIndexFiles(record, primaryKey, value => deletedValues.has(value)) ?? []) {
+    await removeIfDeleted(fileName)
+  }
+  if (found.size < deletedValues.size) {
+    for (const fileName of record.entries.filter(entry => !removed.has(entry))) {
+      await removeIfDeleted(fileName)
+    }
+  }
+  return record.entries.filter(fileName => !removed.has(fileName))
 }
 
 export const deleteEntity = async (entity: string = '', dataSet: Object = {}): Promise<Object> => {
-  const databasePath = getSetting('databasePath', 'database/')
   const record = await retrieveRecord(entity)
   const primaryKey = record.keys.find(key => key.type === 'primary')
   if (!primaryKey) {
@@ -73,8 +87,12 @@ export const deleteEntity = async (entity: string = '', dataSet: Object = {}): P
   await assertNoDependents(entity, primaryKey, toDelete)
   const deletedValues = new Set(toDelete.map(row => computeKeyValue(primaryKey.fields, row)))
 
-  record.entries = await removeMatchingEntries(entity, record, primaryKey, deletedValues)
-  await writeFile(`${databasePath}${record.path}.json`, JSON.stringify(record, null, 2))
+  const remaining = await removeMatchingEntries(entity, record, primaryKey, deletedValues)
+  if (remaining.length !== record.entries.length) {
+    await discardPacked(record.path)
+  }
+  record.entries = remaining
+  await writeJson(`${record.path}.json`, record)
 
   return dataSet
 }
