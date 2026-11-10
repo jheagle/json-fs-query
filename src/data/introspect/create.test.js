@@ -143,3 +143,33 @@ describe('create', () => {
     })
   })
 })
+
+describe('create() refuses names the query language would', () => {
+  test.each([
+    ['a record name with a path in it', ['../outside', []]],
+    ['a record name with a slash', ['a/b', []]],
+    ['a field name with a path in it', ['things', [{ name: '../x', type: 'string' }]]],
+    ['a field name with a space', ['things', [{ name: 'first name', type: 'string' }]]],
+    ['a missing field name', ['things', [{ type: 'string' }]]]
+  ])('%s', async (_, [recordName, definition]) => {
+    await expect(create(recordName, definition, [])).rejects.toThrow(/Invalid name .* in create\(\)/)
+    expect(fileExists(`${databasePath}things.json`)).toBeFalsy()
+    expect(fileExists('outside.json')).toBeFalsy()
+  })
+
+  test('a key whose index file or reference is a path', async () => {
+    const definition = [{ name: '_id', type: 'string' }, { name: 'owner', type: 'string' }]
+    await expect(create('things', definition, [{ type: 'primary', fields: ['_id'], lookup: '../../pk.json' }]))
+      .rejects.toThrow(/Invalid index file "\.\.\/\.\.\/pk\.json" in create\(\)/)
+    await expect(create('things', definition, [{ type: 'foreign', fields: ['owner'], references: [{ lookup: '../people.json', fields: ['people._id'] }] }]))
+      .rejects.toThrow(/Invalid index file "\.\.\/people\.json" in create\(\)/)
+    await expect(create('things', definition, [{ type: 'foreign', fields: ['owner'], references: [{ lookup: 'people.json', fields: ['../people._id'] }] }]))
+      .rejects.toThrow(/Invalid name .* in create\(\) of things/)
+    expect(fileExists(`${databasePath}things.json`)).toBeFalsy()
+  })
+
+  test('ordinary names with digits, _ and - still work', async () => {
+    const created = await create('my_things-2', [{ name: 'first_name-2', type: 'string' }], [])
+    expect(created.path).toBe('my_things-2')
+  })
+})

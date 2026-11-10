@@ -34,3 +34,14 @@ describe('describe', () => {
     expect(result).toEqual(['foo.json', 'bar.json'])
   })
 })
+
+describe('describe() refuses names the query language would', () => {
+  test.each([['../outside'], ['a/b'], ['']])('refuses %p', async name => {
+    await expect(describeRecord(name)).rejects.toThrow(/Invalid name .* in describe\(\)/)
+  })
+
+  test('the default, __RECORDS, still lists the records', async () => {
+    await create('foo', [], [])
+    expect(await describeRecord()).toEqual(['foo.json'])
+  })
+})
