@@ -3,7 +3,8 @@ import { recordDefinition } from './definitions/record'
 import { keyDefinition } from './definitions/key'
 import { assertValidDefinition } from './create'
 import { ParsedAlter } from '../utilities/parsers/parseAlter'
-import { keyLookup, nameMatch } from '../utilities/parsers/parseCreate'
+import { keyLookup } from '../utilities/parsers/parseCreate'
+import { assertValidName } from '../utilities/assertValidName'
 import { retrieveRecord } from '../utilities/retrieveRecord'
 import { retrieveFiles } from '../utilities/retrieveFiles'
 import { retrieveEntry } from '../utilities/retrieveRecords'
@@ -261,10 +262,7 @@ export const alter = async (entity: string, change: ParsedAlter): Promise<fieldD
   // The same names the query language allows: a name becomes a key in every row and part of index file paths, so
   // one like `../x` from a direct call must not get that far
   const names = [entity, ...('field' in change ? [change.field?.name] : []), ...('name' in change ? [change.name] : []), ...('to' in change ? [change.to] : [])]
-  const invalid = names.findIndex(name => typeof name !== 'string' || !nameMatch.test(name))
-  if (invalid !== -1) {
-    throw new Error(`Invalid name ${JSON.stringify(names[invalid]) ?? 'undefined'} in alter: names use letters, digits, _ and - only`)
-  }
+  names.forEach(name => assertValidName(name, 'alter'))
   const record = await retrieveRecord(entity)
   switch (change.action) {
     case 'add':

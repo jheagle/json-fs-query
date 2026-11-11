@@ -1,3 +1,4 @@
+import { assertValidLookup, assertValidName } from '../utilities/assertValidName'
 import { record, recordDefinition } from './definitions/record'
 import { keyProperties } from './definitions/key'
 import { fieldProperties } from './definitions/field'
@@ -77,6 +78,20 @@ export const create = async (recordName: string, definition: fieldProperties[] =
   requireNode('create()')
   if (recordName === '__RECORDS') {
     return null
+  }
+  // Names become file paths and row keys: refuse what the query language would (e.g. `../x` from a direct call)
+  assertValidName(recordName, 'create()')
+  for (const field of definition) {
+    assertValidName(field?.name, `create() of ${recordName}`)
+  }
+  for (const key of keys) {
+    (key?.fields ?? []).forEach(name => assertValidName(name, `create() of ${recordName}`))
+    assertValidLookup(key?.lookup, `create() of ${recordName}`)
+    for (const reference of key?.references ?? []) {
+      // A reference names the other record's file (`people.json`) and its fields as `people._id`
+      assertValidLookup(reference?.lookup ?? null, `create() of ${recordName}`)
+      ;(reference?.fields ?? []).forEach(name => String(name).split('.').forEach(part => assertValidName(part, `create() of ${recordName}`)))
+    }
   }
   if (fileExists(`${recordName}.json`)) {
     return null

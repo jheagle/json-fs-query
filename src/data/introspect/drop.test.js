@@ -75,3 +75,20 @@ describe('drop', () => {
     await expect(drop('foo')).resolves.not.toThrow()
   })
 })
+
+describe('drop() refuses names the query language would', () => {
+  test('a path outside the database is refused and nothing is removed', async () => {
+    // drop('../drop-outside') would resolve to ./drop-outside.json next to the database folder
+    await writeFile('drop-outside.json', JSON.stringify({ path: 'drop-outside', entries: [] }))
+    try {
+      await expect(drop('../drop-outside')).rejects.toThrow(/Invalid name "\.\.\/drop-outside" in drop\(\)/)
+      expect(fileExists('drop-outside.json')).toBeTruthy()
+    } finally {
+      await require('fs/promises').rm('drop-outside.json', { force: true })
+    }
+  })
+
+  test.each([['a/b'], [''], [undefined], [42]])('refuses %p', async name => {
+    await expect(drop(name)).rejects.toThrow(/Invalid name .* in drop\(\)/)
+  })
+})
