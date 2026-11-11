@@ -702,7 +702,7 @@ npx jfsq -d site/database < seed.txt        # run every query in a file
 | `--null <text>` | how a table shows `null` (default `NULL`) |
 | `--missing <text>` | how a table shows a missing field (default `—`) |
 | `-v, --version` | print the version |
-| `-h, --help` | list the options, with examples |
+| `-h, --help` | list the options, with examples (at the prompt, `/help` covers the query syntax) |
 
 ### The prompt
 
@@ -733,6 +733,7 @@ can still start with a `/* comment */`). Without a value, each says what it is s
 | `/output <format>` | how the next results print: `table`, `json`, `csv` or `dump` |
 | `/null <text>` | how a table shows `null` |
 | `/missing <text>` | how a table shows a missing field |
+| `/help [topic]` | the commands, and a list of topics; with a topic (`/help read`, `/help create`, `/help where`...), its syntax and examples |
 | `/exit` | quit |
 
 ### Output
