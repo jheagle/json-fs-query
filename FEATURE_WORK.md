@@ -29,7 +29,7 @@ To be considered in this effort or in another feature:
 
 - [x] Create basic Interactive input; await query input and add to buffer, be able to exit. (done on `feature/basic-cli`, tick once its PR merges)
 - [x] Detect when a query is complete: scan the buffer for open quotes and brackets instead of `endsWith(';')` (which also fires inside an unclosed quote), and trailing `;` is now acceptable for parsing. The continuation prompt shows what is still open, psql-style (e.g. `'>` for an open quote, `(>` for an open bracket).
-- [ ] Pass the buffer to the query parser so it can run the queries (`query()`). A parse or runtime error prints a message and returns to the prompt; it never ends the session. Results can print raw for now.
+- [x] Pass the buffer to the query parser so it can run the queries (`query()`). A parse or runtime error prints a message and returns to the prompt; it never ends the session. Results can print raw for now.
 - [ ] Display query results as a table in the interactive CLI (`prettytable`, added here). Table is the default output; handle an empty result and multiple queries in one buffer.
   - Grouped results (3.0, `group by`): a list of `{ field, value | missing: true, rows | groups }` in sorted order.
     First POC: one table per group under a heading (`date = 2024-06-05 (3 rows)`), with nested groups as indented
