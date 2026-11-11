@@ -1,6 +1,6 @@
 {
   "name": "json-fs-query",
-  "version": "3.5.0",
+  "version": "3.6.0",
   "description": "A git-native JSON data store for static sites: JSON files with a schema, enforced keys and a SQL-like query language, read straight from static hosting.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
