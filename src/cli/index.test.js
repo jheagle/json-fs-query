@@ -15,6 +15,10 @@ let cli
 // The CLI's own copy of the settings (each session loads a fresh one)
 let config
 
+// Whether the next session reads from a terminal (a person typing) or a pipe / file (see pipedCli)
+let stdinIsTTY = true
+const stdinTTYDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY')
+
 /**
  * Load a fresh copy of the CLI against a fake readline interface, so each test drives its own session.
  * @param {...string} args Command-line arguments, as typed after `jfsq`
@@ -39,6 +43,7 @@ const startCli = (...args) => {
   readline.createInterface.mockReturnValue(rl)
   const argv = process.argv
   process.argv = ['node', 'jfsq', ...args]
+  Object.defineProperty(process.stdin, 'isTTY', { value: stdinIsTTY, configurable: true })
   try {
     jest.isolateModules(() => {
       cli = require('./index')
@@ -98,6 +103,12 @@ beforeEach(() => {
 
 afterEach(() => {
   jest.restoreAllMocks()
+  stdinIsTTY = true
+  if (stdinTTYDescriptor) {
+    Object.defineProperty(process.stdin, 'isTTY', stdinTTYDescriptor)
+  } else {
+    delete process.stdin.isTTY
+  }
   // -q sets the exit code; keep it from failing the test run
   process.exitCode = undefined
 })
@@ -549,5 +560,98 @@ describe('help and version', () => {
     for (const option of ['-q, --query <query>', '-d, --database <path>', '--databases <folder>', '-v, --version', '-h, --help', 'Examples:']) {
       expect(stdout).toContain(option)
     }
+  })
+})
+
+describe('piped input (jfsq < seed.txt)', () => {
+  /**
+   * Start a session reading from a pipe, as `jfsq < seed.txt` does.
+   * @param {...string} args
+   * @returns {EventEmitter}
+   */
+  const pipedCli = (...args) => {
+    stdinIsTTY = false
+    return startCli(...args)
+  }
+
+  /**
+   * Feed the lines of a file, then the end of input, and wait for the session to finish.
+   * @param {EventEmitter} rl
+   * @param {string} text
+   * @returns {Promise<void>}
+   */
+  const pipe = (rl, text) => {
+    text.split('\n').forEach(line => rl.emit('line', line))
+    rl.close()
+    return idle()
+  }
+
+  test('runs each query with no banner, prompts or goodbye, and exits 0', async () => {
+    mockQuery.mockResolvedValue([[]])
+    const rl = pipedCli()
+    await pipe(rl, 'insert foo values a = 1;\nread foo\n  where a = 1;')
+    expect(receivedQueries()).toEqual(['insert foo values a = 1;', 'read foo\n  where a = 1;'])
+    expect(output('log')).toEqual(['(0 rows)\n', '(0 rows)\n'])
+    expect(rl.prompt).not.toHaveBeenCalled()
+    expect(process.exit).toHaveBeenCalledWith(0)
+  })
+
+  test('a failing query is reported, the rest still run, and the exit code is 1', async () => {
+    mockQuery
+      .mockRejectedValueOnce(new Error('Record "foo" doesn\'t exist'))
+      .mockResolvedValue([[]])
+    const rl = pipedCli()
+    await pipe(rl, 'read foo;\nread bar;')
+    expect(receivedQueries()).toEqual(['read foo;', 'read bar;'])
+    expect(output('error')).toEqual(['Error: Record "foo" doesn\'t exist'])
+    expect(process.exit).toHaveBeenCalledWith(1)
+  })
+
+  test('the last query runs even without its closing semicolon', async () => {
+    const rl = pipedCli()
+    await pipe(rl, 'read foo;\nread bar')
+    expect(receivedQueries()).toEqual(['read foo;', 'read bar'])
+    expect(process.exit).toHaveBeenCalledWith(0)
+  })
+
+  test('comments and blank lines left at the end are not run', async () => {
+    const rl = pipedCli()
+    await pipe(rl, 'read foo;\n-- the end\n/* really */\n')
+    expect(receivedQueries()).toEqual(['read foo;'])
+    expect(process.exit).toHaveBeenCalledWith(0)
+  })
+
+  test('the database line is not printed, but a bad database still exits 1 without running anything', async () => {
+    const databases = fs.mkdtempSync(path.join(os.tmpdir(), 'jfsq-cli-'))
+    try {
+      const rl = pipedCli('--databases', databases, '-d', 'nope')
+      await pipe(rl, 'read foo;')
+      expect(receivedQueries()).toEqual([])
+      expect(output('log')).toEqual([])
+      expect(output('error')).toEqual(['Error: Database "nope" doesn\'t exist'])
+      expect(process.exit).toHaveBeenCalledWith(1)
+    } finally {
+      fs.rmSync(databases, { recursive: true, force: true })
+    }
+  })
+
+  test('a person typing still gets the banner, prompts and goodbye, and exit 0 after a failed query', async () => {
+    mockQuery.mockRejectedValueOnce(new Error('nope'))
+    const rl = startCli()
+    await send(rl, 'read foo;')
+    rl.close()
+    await idle()
+    expect(output('log')[0]).toBe('JSON Filesystem Query CLI')
+    expect(rl.prompt).toHaveBeenCalled()
+    expect(output('log')).toContain('\nGoodbye!')
+    expect(process.exit).toHaveBeenCalledWith(0)
+  })
+
+  test('an unfinished query typed at the prompt is dropped on exit, not run', async () => {
+    const rl = startCli()
+    await send(rl, 'read foo')
+    rl.close()
+    await idle()
+    expect(receivedQueries()).toEqual([])
   })
 })
