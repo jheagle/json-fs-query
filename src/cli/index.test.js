@@ -655,3 +655,113 @@ describe('piped input (jfsq < seed.txt)', () => {
     expect(receivedQueries()).toEqual([])
   })
 })
+
+describe('output format and markers', () => {
+  test('-o json prints each result as JSON', async () => {
+    mockQuery.mockResolvedValue([[{ id: 1, note: null }], []])
+    startCli('-o', 'json', '-q', 'read foo; read bar;')
+    await idle()
+    expect(output('log')).toEqual([`${JSON.stringify([{ id: 1, note: null }], null, 2)}\n`, '[]\n'])
+  })
+
+  test('--output csv prints CSV', async () => {
+    mockQuery.mockResolvedValue([[{ id: 1, note: 'a,b' }]])
+    startCli('--output', 'csv', '-q', 'read foo')
+    await idle()
+    expect(output('log')).toEqual(['id,note\n1,"a,b"\n'])
+  })
+
+  test('an unknown -o is refused with exit code 1', () => {
+    jest.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    process.exit.mockImplementation(code => {
+      throw new Error(`exit ${code}`)
+    })
+    expect(() => startCli('-o', 'xml')).toThrow('exit 1')
+    expect(process.stderr.write.mock.calls.join('')).toContain('Allowed choices are table, json, csv, dump')
+  })
+
+  test('-o dump is refused before the query runs, so nothing is written', async () => {
+    startCli('-o', 'dump', '-q', 'insert foo values a = 1')
+    await idle()
+    expect(receivedQueries()).toEqual([])
+    expect(output('error')[0]).toMatch(/^Error: dump output isn't available yet/)
+    expect(process.exitCode).toBe(1)
+  })
+
+  test('--null and --missing change the table markers', async () => {
+    mockQuery.mockResolvedValue([[{ a: null }, {}]])
+    startCli('--null', '(null)', '--missing', '(none)', '-q', 'read foo')
+    await idle()
+    expect(output('log')[0]).toContain('| (null) |')
+    expect(output('log')[0]).toContain('| (none) |')
+  })
+
+  test('/output changes the format for the rest of the session, and says what it is', async () => {
+    mockQuery.mockResolvedValue([[{ id: 1 }]])
+    const rl = startCli()
+    await send(rl, '/output csv')
+    expect(output('log')).toContain('Output: csv')
+    await send(rl, 'read foo;')
+    expect(output('log')).toContain('id\n1\n')
+
+    await send(rl, '/OUTPUT')
+    expect(output('log').pop()).toBe('Output: csv')
+    expect(receivedQueries()).toEqual(['read foo;'])
+  })
+
+  test('/output with an unknown format says so and keeps the format', async () => {
+    const rl = startCli()
+    await send(rl, '/output xml')
+    expect(output('error')).toEqual(['Error: Unknown output "xml": use table, json, csv, dump'])
+    await send(rl, '/output')
+    expect(output('log').pop()).toBe('Output: table')
+  })
+
+  test('/output dump refuses each query before it runs', async () => {
+    const rl = startCli()
+    await send(rl, '/output dump', 'insert foo values a = 1;')
+    expect(receivedQueries()).toEqual([])
+    expect(output('error')[0]).toMatch(/^Error: dump output isn't available yet/)
+  })
+
+  test('/null and /missing change the markers, and say what they are', async () => {
+    mockQuery.mockResolvedValue([[{ a: null }, {}]])
+    const rl = startCli()
+    await send(rl, '/null (null)', '/missing')
+    expect(output('log')).toContain('Null shows as: (null)')
+    expect(output('log')).toContain('Missing shows as: —')
+    await send(rl, 'read foo;')
+    expect(output('log').join('\n')).toContain('| (null) |')
+  })
+
+  test('an unknown command lists the ones there are', async () => {
+    const rl = startCli()
+    await send(rl, '/frobnicate')
+    expect(output('error')).toEqual(['Error: Unknown command /frobnicate: use /output <table|json|csv|dump>, /null <text>, /missing <text> or /exit'])
+    expect(receivedQueries()).toEqual([])
+  })
+
+  test('a query starting with a /* comment is a query, not a command', async () => {
+    const rl = startCli()
+    await send(rl, '/* first */ read foo;')
+    expect(receivedQueries()).toEqual(['/* first */ read foo;'])
+  })
+
+  test('a command line inside an unfinished query is part of the query', async () => {
+    const rl = startCli()
+    await send(rl, 'read foo', '/output csv', ';')
+    expect(receivedQueries()).toEqual(['read foo\n/output csv\n;'])
+  })
+
+  test('commands in piped input run quietly too, and a bad one makes the exit code 1', async () => {
+    stdinIsTTY = false
+    mockQuery.mockResolvedValue([[{ id: 1 }]])
+    const rl = startCli()
+    ;['/output json', 'read foo;', '/nope'].forEach(line => rl.emit('line', line))
+    rl.close()
+    await idle()
+    // Only the result: no "Output: json" in front of it, so the output stays valid for jq
+    expect(output('log')).toEqual([`${JSON.stringify([{ id: 1 }], null, 2)}\n`])
+    expect(process.exit).toHaveBeenCalledWith(1)
+  })
+})

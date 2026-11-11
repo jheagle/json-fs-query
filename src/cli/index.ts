@@ -1,11 +1,15 @@
 #!/usr/bin/env node
-import { Command } from 'commander'
+import { Command, Option } from 'commander'
 import { DatabaseOptions } from './chooseDatabase'
 import { Session, startInteractive } from './interactive'
+import { OutputFormat, outputFormats, OutputSettings } from './output'
 import { runDirect } from './runDirect'
 
 type CliOptions = DatabaseOptions & {
   query?: string
+  output: OutputFormat
+  null?: string
+  missing?: string
 }
 
 // The package's own version (package.json sits two folders up from both src/cli and dist/cli)
@@ -19,26 +23,40 @@ const program: Command = new Command()
   .option('-q, --query <query>', 'run this query (or several, separated by ;), print the results and exit')
   .option('-d, --database <path>', 'the database folder (default database/); with --databases, the name of a database in that folder')
   .option('--databases <folder>', 'a folder holding several databases (create database, use, show databases)')
+  .addOption(new Option('-o, --output <format>', 'how results print (at the prompt: /output <format>)').choices(outputFormats).default('table'))
+  .option('--null <text>', 'how a table shows null (default NULL; at the prompt: /null <text>)')
+  .option('--missing <text>', 'how a table shows a missing field (default —; at the prompt: /missing <text>)')
   .helpOption('-h, --help', 'print this help')
   .addHelpText('after', `
 Examples:
   jfsq                                         open the prompt on database/
   jfsq -d tasks-db -q "read tasks where done = false"
-  jfsq --databases dbs -d real -q "show records"`)
+  jfsq --databases dbs -d real -q "show records"
+  jfsq -o json -q "read tasks" | jq .
+  jfsq -o csv -q "read tasks" > tasks.csv`)
   .parse(process.argv)
 
 const options: CliOptions = program.opts()
 
+// Shared with the prompt, whose /output, /null and /missing commands change it
+const settings: OutputSettings = {
+  format: options.output,
+  markers: {
+    ...(typeof options.null === 'string' ? { null: options.null } : {}),
+    ...(typeof options.missing === 'string' ? { missing: options.missing } : {})
+  }
+}
+
 // With -q the query runs straight away and the exit code says whether it worked; otherwise the prompt opens
 const session: Session = typeof options.query === 'string'
   ? (() => {
-      const done: Promise<void> = runDirect(options.query, options).then((code: number): void => {
+      const done: Promise<void> = runDirect(options.query, options, settings).then((code: number): void => {
         // exitCode rather than exit(): process.exit can cut off output still being written to a pipe
         process.exitCode = code
       })
       return { whenIdle: () => done }
     })()
-  : startInteractive(options)
+  : startInteractive(options, settings)
 
 /**
  * Resolves once the session is idle: every line handled (the prompt), or the query finished (-q).
