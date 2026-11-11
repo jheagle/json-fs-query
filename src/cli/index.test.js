@@ -88,6 +88,7 @@ const output = method => console[method].mock.calls.map(([message]) => stripVTCo
 const lastPrompt = rl => stripVTControlCharacters(rl.setPrompt.mock.lastCall[0])
 
 beforeEach(() => {
+  readline.createInterface.mockClear()
   mockQuery.mockReset()
   mockQuery.mockResolvedValue([])
   jest.spyOn(console, 'log').mockImplementation(() => {})
@@ -97,6 +98,8 @@ beforeEach(() => {
 
 afterEach(() => {
   jest.restoreAllMocks()
+  // -q sets the exit code; keep it from failing the test run
+  process.exitCode = undefined
 })
 
 describe('the interactive CLI', () => {
@@ -439,5 +442,112 @@ describe('choosing the database', () => {
     await idle()
     expect(receivedQueries()).toEqual(['read foo;'])
     expect(config.getSetting('database')).toBe('real')
+  })
+})
+
+describe('running a query directly (-q)', () => {
+  test('-q runs the query, prints the result and exits 0, without opening the prompt', async () => {
+    mockQuery.mockResolvedValue([[{ id: 1 }]])
+    startCli('-q', 'read foo')
+    await idle()
+    expect(receivedQueries()).toEqual(['read foo'])
+    expect(readline.createInterface).not.toHaveBeenCalled()
+    expect(output('log')).toEqual([[
+      '+----+',
+      '| id |',
+      '+----+',
+      '| 1  |',
+      '+----+',
+      '(1 row)',
+      ''
+    ].join('\n')])
+    expect(process.exitCode).toBe(0)
+    expect(process.exit).not.toHaveBeenCalled()
+  })
+
+  test('--query is the long form, and several queries print one result each', async () => {
+    mockQuery.mockResolvedValue([[], []])
+    startCli('--query', 'read foo; read bar;')
+    await idle()
+    expect(receivedQueries()).toEqual(['read foo; read bar;'])
+    expect(output('log')).toEqual(['(0 rows)\n', '(0 rows)\n'])
+  })
+
+  test('a failing query prints the error and exits 1', async () => {
+    mockQuery.mockRejectedValue(new Error('Record "foo" doesn\'t exist'))
+    startCli('-q', 'read foo')
+    await idle()
+    expect(output('error')).toEqual(['Error: Record "foo" doesn\'t exist'])
+    expect(output('log')).toEqual([])
+    expect(process.exitCode).toBe(1)
+  })
+
+  test('the database options apply before the query runs', async () => {
+    let databasePath
+    mockQuery.mockImplementation(async () => {
+      databasePath = config.getSetting('databasePath')
+      return []
+    })
+    startCli('-d', 'tasks-db', '-q', 'read tasks')
+    await idle()
+    expect(databasePath).toBe('tasks-db/')
+  })
+
+  test('a database that does not exist exits 1 without running the query', async () => {
+    const databases = fs.mkdtempSync(path.join(os.tmpdir(), 'jfsq-cli-'))
+    try {
+      startCli('--databases', databases, '-d', 'nope', '-q', 'read foo')
+      await idle()
+      expect(receivedQueries()).toEqual([])
+      expect(output('error')).toEqual(['Error: Database "nope" doesn\'t exist'])
+      expect(process.exitCode).toBe(1)
+    } finally {
+      fs.rmSync(databases, { recursive: true, force: true })
+    }
+  })
+
+  test('an empty -q runs (and fails) rather than opening the prompt', async () => {
+    mockQuery.mockRejectedValue(new Error('No query'))
+    startCli('-q', '')
+    await idle()
+    expect(readline.createInterface).not.toHaveBeenCalled()
+    expect(process.exitCode).toBe(1)
+  })
+})
+
+describe('help and version', () => {
+  /**
+   * Load the CLI with these args, catching what commander writes and the exit it asks for.
+   * @param {...string} args
+   * @returns {{ code: number, stdout: string }}
+   */
+  const runToExit = (...args) => {
+    const stdout = jest.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    // A second spyOn in the same test returns the same mock: start each run from no calls
+    stdout.mockClear()
+    process.exit.mockImplementation(code => {
+      throw new Error(`exit ${code}`)
+    })
+    let code
+    try {
+      startCli(...args)
+    } catch (error) {
+      code = Number(error.message.replace('exit ', ''))
+    }
+    return { code, stdout: stdout.mock.calls.join('') }
+  }
+
+  test('-v and --version print the package version', () => {
+    const { version } = require('../../package.json')
+    expect(runToExit('-v')).toEqual({ code: 0, stdout: `${version}\n` })
+    expect(runToExit('--version')).toEqual({ code: 0, stdout: `${version}\n` })
+  })
+
+  test('-h lists every option, with examples', () => {
+    const { code, stdout } = runToExit('-h')
+    expect(code).toBe(0)
+    for (const option of ['-q, --query <query>', '-d, --database <path>', '--databases <folder>', '-v, --version', '-h, --help', 'Examples:']) {
+      expect(stdout).toContain(option)
+    }
   })
 })
