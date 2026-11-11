@@ -11,7 +11,7 @@
     "browser"
   ],
   "scripts": {
-    "build": "gulp build",
+    "build": "gulp build && node -e \"require('fs').chmodSync('dist/cli/index.js', 0o755)\"",
     "dev": "gulp",
     "docs": "gulp docs",
     "publish:bundle": "gulp copyFiles",
