@@ -1,4 +1,7 @@
 import { EventEmitter } from 'events'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
 import * as readline from 'readline'
 import { stripVTControlCharacters } from 'util'
 
@@ -9,12 +12,15 @@ const mockQuery = jest.fn()
 jest.mock('../data/queries/query', () => ({ query: (...args) => mockQuery(...args) }))
 
 let cli
+// The CLI's own copy of the settings (each session loads a fresh one)
+let config
 
 /**
  * Load a fresh copy of the CLI against a fake readline interface, so each test drives its own session.
+ * @param {...string} args Command-line arguments, as typed after `jfsq`
  * @returns {EventEmitter} The fake interface, emit 'line' on it to simulate the user pressing Enter.
  */
-const startCli = () => {
+const startCli = (...args) => {
   const rl = new EventEmitter()
   // Like the real interface, prompting after close throws (piped input closes it while queued lines still run)
   rl.closed = false
@@ -31,9 +37,16 @@ const startCli = () => {
   rl.line = ''
   rl.write = jest.fn()
   readline.createInterface.mockReturnValue(rl)
-  jest.isolateModules(() => {
-    cli = require('./index')
-  })
+  const argv = process.argv
+  process.argv = ['node', 'jfsq', ...args]
+  try {
+    jest.isolateModules(() => {
+      cli = require('./index')
+      config = require('../data/utilities/config')
+    })
+  } finally {
+    process.argv = argv
+  }
   return rl
 }
 
@@ -121,9 +134,11 @@ describe('the interactive CLI', () => {
 
   test('a blank line at the start of a query is ignored', async () => {
     const rl = startCli()
+    await idle()
+    const prompts = rl.setPrompt.mock.calls.length
     await send(rl, '')
     await send(rl, '   ')
-    expect(rl.setPrompt).not.toHaveBeenCalled()
+    expect(rl.setPrompt).toHaveBeenCalledTimes(prompts)
 
     await send(rl, 'read foo;')
     expect(receivedQueries()).toEqual(['read foo;'])
@@ -309,5 +324,120 @@ describe('the interactive CLI', () => {
     expect(receivedQueries()).toEqual(['read foo;', 'read bar;'])
     expect(output('error')).toEqual([])
     expect(process.exit).toHaveBeenCalledWith(0)
+  })
+})
+
+describe('choosing the database', () => {
+  let databases
+
+  beforeAll(() => {
+    // A folder holding two databases, as create database makes them
+    databases = fs.mkdtempSync(path.join(os.tmpdir(), 'jfsq-cli-'))
+    fs.mkdirSync(path.join(databases, 'real'))
+    fs.mkdirSync(path.join(databases, 'test'))
+  })
+
+  afterAll(() => {
+    fs.rmSync(databases, { recursive: true, force: true })
+  })
+
+  test('without options the database is database/', async () => {
+    const rl = startCli()
+    await idle()
+    expect(output('log')).toContain('Database: database/\n')
+    expect(lastPrompt(rl)).toBe('JSON-Query> ')
+  })
+
+  test('-d points the session at another database folder', async () => {
+    const rl = startCli('-d', 'tasks-db/')
+    await idle()
+    expect(config.getSetting('databasePath')).toBe('tasks-db/')
+    expect(output('log')).toContain('Database: tasks-db/\n')
+    expect(lastPrompt(rl)).toBe('JSON-Query> ')
+  })
+
+  test('-d adds the trailing slash a database folder needs', async () => {
+    startCli('-d', 'tasks-db')
+    await idle()
+    expect(config.getSetting('databasePath')).toBe('tasks-db/')
+  })
+
+  test('--database is the long form of -d', async () => {
+    startCli('--database', 'other/')
+    await idle()
+    expect(config.getSetting('databasePath')).toBe('other/')
+  })
+
+  test('--databases with -d picks a database in that folder, and the prompt names it', async () => {
+    const rl = startCli('--databases', databases, '-d', 'real')
+    await idle()
+    expect(config.getSetting('database')).toBe('real')
+    expect(output('log')).toContain(`Database: ${databases}/real/\n`)
+    expect(lastPrompt(rl)).toBe('real> ')
+
+    // The continuation prompt lines up with the shorter prompt too
+    await send(rl, 'read foo')
+    expect(lastPrompt(rl)).toBe('   ;> ')
+  })
+
+  test('the prompt follows a use in a query', async () => {
+    const rl = startCli('--databases', databases, '-d', 'real')
+    mockQuery.mockImplementationOnce(async () => {
+      config.switchDatabase('test')
+      return ['test']
+    })
+    await send(rl, 'use test;')
+    expect(lastPrompt(rl)).toBe('test> ')
+  })
+
+  test('--databases without -d leaves no database in use until a use', async () => {
+    const rl = startCli('--databases', databases)
+    await idle()
+    expect(config.getSetting('databasesPath')).toBe(databases)
+    expect(config.getSetting('database')).toBeUndefined()
+    expect(output('log')).toContain(`Databases: ${databases} (none in use yet: use <name>;)\n`)
+    expect(lastPrompt(rl)).toBe('JSON-Query> ')
+  })
+
+  test('a database that does not exist ends the session with exit code 1', async () => {
+    const rl = startCli('--databases', databases, '-d', 'nope')
+    await idle()
+    expect(output('error')).toEqual(['Error: Database "nope" doesn\'t exist'])
+    expect(rl.close).toHaveBeenCalled()
+    expect(process.exit).toHaveBeenCalledWith(1)
+    expect(output('log')).not.toContain('\nGoodbye!')
+  })
+
+  test('lines piped after a failed start are not run', async () => {
+    const rl = startCli('--databases', databases, '-d', 'nope')
+    rl.emit('line', 'read workouts;')
+    await idle()
+    expect(receivedQueries()).toEqual([])
+    expect(process.exit).toHaveBeenCalledWith(1)
+  })
+
+  test('an invalid database name ends the session with exit code 1', async () => {
+    startCli('--databases', databases, '-d', 'not/a/name')
+    await idle()
+    expect(output('error')[0]).toMatch(/^Error: Invalid database name "not\/a\/name"/)
+    expect(process.exit).toHaveBeenCalledWith(1)
+  })
+
+  test('an unknown option is refused with exit code 1', () => {
+    const stderr = jest.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    // commander exits on its own; process.exit is mocked, so stop the load where a real exit would
+    process.exit.mockImplementation(code => {
+      throw new Error(`exit ${code}`)
+    })
+    expect(() => startCli('--nope')).toThrow('exit 1')
+    expect(stderr.mock.calls.join('')).toContain("unknown option '--nope'")
+  })
+
+  test('lines typed while the session starts wait for it', async () => {
+    const rl = startCli('--databases', databases, '-d', 'real')
+    rl.emit('line', 'read foo;')
+    await idle()
+    expect(receivedQueries()).toEqual(['read foo;'])
+    expect(config.getSetting('database')).toBe('real')
   })
 })
