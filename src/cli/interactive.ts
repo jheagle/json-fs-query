@@ -14,6 +14,16 @@ export type Session = {
 const defaultPrompt: string = 'JSON-Query> '
 
 /**
+ * Whether text holds anything to run: something other than whitespace and comments.
+ * @param text
+ * @returns {boolean}
+ */
+const hasQuery = (text: string): boolean => text
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/--[^\n]*/g, '')
+  .trim() !== ''
+
+/**
  * The main prompt: the name of the database in use when there is one (it changes with `use`), otherwise JSON-Query.
  * @returns {string}
  */
@@ -27,11 +37,15 @@ const continuePrefix = (waitingFor: string): string => styleText('dim', `${waiti
 
 /**
  * Open the prompt: read queries line by line, run each one once it is complete, until /exit, Ctrl+C or the end of
- * piped input.
+ * piped input. Piped input (`jfsq < seed.txt`, stdin not a terminal) runs the same way, but quietly: no banner, no
+ * prompts and no goodbye, only the results and errors, and the exit code is 1 when any query failed.
  * @param options The database options
  * @returns {Session}
  */
 export const startInteractive = (options: DatabaseOptions): Session => {
+  // Reading a file or a pipe rather than a person typing
+  const piped: boolean = !process.stdin.isTTY
+
   // Create the interface for reading from standard input/output
   const rl: readline.Interface = readline.createInterface({
     input: process.stdin,
@@ -41,6 +55,9 @@ export const startInteractive = (options: DatabaseOptions): Session => {
 
   // 1 when the session can't start (a bad option), so a script can tell
   let exitCode: number = 0
+
+  // Set when a query fails: piped input then exits 1, so a seed script can tell (the prompt carries on regardless)
+  let failed: boolean = false
 
   // Buffer to store multi-line inputs
   let inputBuffer: string = ''
@@ -53,7 +70,7 @@ export const startInteractive = (options: DatabaseOptions): Session => {
    * Show the prompt, unless the session has already closed.
    */
   const showPrompt = (): void => {
-    if (!closed) {
+    if (!closed && !piped) {
       rl.prompt()
     }
   }
@@ -71,9 +88,11 @@ export const startInteractive = (options: DatabaseOptions): Session => {
     } while (current !== lineQueue)
   }
 
-  console.log('JSON Filesystem Query CLI')
-  console.log('Type your command. End it with a semicolon (;) and press Enter to execute.')
-  console.log('Type "/exit" or press Ctrl+C to quit.')
+  if (!piped) {
+    console.log('JSON Filesystem Query CLI')
+    console.log('Type your command. End it with a semicolon (;) and press Enter to execute.')
+    console.log('Type "/exit" or press Ctrl+C to quit.')
+  }
 
   /**
    * Run a completed buffer through the query parser. A parse or runtime error is printed and the session carries on.
@@ -84,6 +103,7 @@ export const startInteractive = (options: DatabaseOptions): Session => {
     try {
       printResults(await query(input))
     } catch (error) {
+      failed = true
       printError(error)
     }
   }
@@ -158,11 +178,17 @@ export const startInteractive = (options: DatabaseOptions): Session => {
   // Handle graceful exit on Ctrl+C, /exit or the end of piped input, after any queued lines have run
   rl.on('close', (): void => {
     closed = true
-    lineQueue = lineQueue.then((): void => {
-      if (!exitCode) {
+    lineQueue = lineQueue.then(async (): Promise<void> => {
+      // A file whose last query has no closing `;` still runs it (unless all that's left is comments or space)
+      if (piped && !exitCode && hasQuery(inputBuffer)) {
+        const input: string = inputBuffer
+        inputBuffer = ''
+        await processInput(input)
+      }
+      if (!exitCode && !piped) {
         console.log('\nGoodbye!')
       }
-      process.exit(exitCode)
+      process.exit(exitCode || (piped && failed ? 1 : 0))
     })
   })
 
@@ -173,7 +199,10 @@ export const startInteractive = (options: DatabaseOptions): Session => {
    */
   const start = async (): Promise<void> => {
     try {
-      console.log(`${await chooseDatabase(options)}\n`)
+      const database: string = await chooseDatabase(options)
+      if (!piped) {
+        console.log(`${database}\n`)
+      }
     } catch (error) {
       printError(error)
       exitCode = 1
