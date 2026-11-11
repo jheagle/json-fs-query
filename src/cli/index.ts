@@ -33,7 +33,9 @@ Examples:
   jfsq -d tasks-db -q "read tasks where done = false"
   jfsq --databases dbs -d real -q "show records"
   jfsq -o json -q "read tasks" | jq .
-  jfsq -o csv -q "read tasks" > tasks.csv`)
+  jfsq -o csv -q "read tasks" > tasks.csv
+
+At the prompt, type /help for its commands and the query syntax (/help read, /help create, ...).`)
   .parse(process.argv)
 
 const options: CliOptions = program.opts()

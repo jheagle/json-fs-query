@@ -557,7 +557,7 @@ describe('help and version', () => {
   test('-h lists every option, with examples', () => {
     const { code, stdout } = runToExit('-h')
     expect(code).toBe(0)
-    for (const option of ['-q, --query <query>', '-d, --database <path>', '--databases <folder>', '-v, --version', '-h, --help', 'Examples:']) {
+    for (const option of ['-q, --query <query>', '-d, --database <path>', '--databases <folder>', '-v, --version', '-h, --help', 'Examples:', 'type /help']) {
       expect(stdout).toContain(option)
     }
   })
@@ -737,8 +737,35 @@ describe('output format and markers', () => {
   test('an unknown command lists the ones there are', async () => {
     const rl = startCli()
     await send(rl, '/frobnicate')
-    expect(output('error')).toEqual(['Error: Unknown command /frobnicate: use /output <table|json|csv|dump>, /null <text>, /missing <text> or /exit'])
+    expect(output('error')).toEqual(['Error: Unknown command /frobnicate: use /output <table|json|csv|dump>, /null <text>, /missing <text>, /help [topic] or /exit'])
     expect(receivedQueries()).toEqual([])
+  })
+
+  test('/help lists the commands and topics, and /help <topic> shows its syntax', async () => {
+    const rl = startCli()
+    await send(rl, '/help')
+    const overview = output('log').pop()
+    expect(overview).toContain('/output <table|json|csv|dump>')
+    expect(overview).toContain('/exit')
+    expect(overview).toMatch(/^ {2}read +read rows/m)
+
+    await send(rl, '/HELP Read')
+    expect(output('log').pop()).toMatch(/^read <record>/)
+    await send(rl, '/help merge')
+    expect(output('log').pop()).toContain('merge <record>.<field> with')
+    expect(receivedQueries()).toEqual([])
+    expect(output('error')).toEqual([])
+  })
+
+  test('/help with an unknown topic names the ones there are', async () => {
+    const rl = startCli()
+    await send(rl, '/help frobnicate')
+    expect(output('error')).toEqual([expect.stringMatching(/^Error: No help for "frobnicate": try read, insert, /)])
+  })
+
+  test('the banner mentions /help', () => {
+    startCli()
+    expect(output('log').join('\n')).toContain('/help')
   })
 
   test('a query starting with a /* comment is a query, not a command', async () => {

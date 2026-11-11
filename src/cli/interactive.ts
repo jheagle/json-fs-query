@@ -5,6 +5,7 @@ import { query } from '../data/queries/query'
 import { getSetting } from '../data/utilities/config'
 import { chooseDatabase, DatabaseOptions } from './chooseDatabase'
 import { defaultMarkers } from './formatResult'
+import { commandList, helpText } from './help'
 import { assertPrintable, OutputSettings, outputFormats, OutputFormat, printError, printResults } from './output'
 
 export type Session = {
@@ -96,7 +97,7 @@ export const startInteractive = (options: DatabaseOptions, settings: OutputSetti
   if (!piped) {
     console.log('JSON Filesystem Query CLI')
     console.log('Type your command. End it with a semicolon (;) and press Enter to execute.')
-    console.log('Type "/exit" or press Ctrl+C to quit.')
+    console.log('Type "/help" for commands and query syntax, "/exit" or Ctrl+C to quit.')
   }
 
   /**
@@ -138,9 +139,19 @@ export const startInteractive = (options: DatabaseOptions, settings: OutputSetti
         say(`${marker === 'null' ? 'Null' : 'Missing'} shows as: ${settings.markers[marker] ?? defaultMarkers[marker]}`)
         return
       }
+      case 'help': {
+        // Printed even for piped input: it was asked for
+        try {
+          console.log(helpText(value))
+        } catch (error) {
+          failed = true
+          printError(error)
+        }
+        return
+      }
       default:
         failed = true
-        printError(`Unknown command /${name}: use /output <${outputFormats.join('|')}>, /null <text>, /missing <text> or /exit`)
+        printError(`Unknown command /${name}: use ${commandList}`)
     }
   }
 
