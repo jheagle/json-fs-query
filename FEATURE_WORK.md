@@ -53,7 +53,8 @@ To be considered in this effort or in another feature:
 - **Schema statements in the query language** (`create`, `drop`, `describe`, `show`): today the parser only knows `read`, `insert`, `update` and `delete` (`findCommand.ts`, `splitQueries.ts`); `create`/`drop`/`describe` exist only as JS functions. This is a core-library change, not a CLI one, and it is what lets the CLI actually set up a database. Show and Describe tables (Additional features 2) belong there.
 - **Multiple databases** (Additional features 3).
 - **User sessions, login and security** (Additional features 4): permissions, audit logging, maybe encryption. A cosmetic `-u` / login prompt is left out of this feature, since it would be rewritten once real sessions exist.
-- **Dump output that fully works** (results exported as `insert` queries), if it isn't finished here.
+- **Dump that fully works:** like `mysqldump`, it generates the queries that would rebuild a record - its `create`, then an `insert` per row - and never runs them. You paste them (or pipe them back through `jfsq`), editing first if you want. It needs the record's definition, not just a query's rows, so it is more likely its own command (dump a record) than an output format for any query (#146 only makes `dump` selectable).
+- **Copying query results into a new record** (not planned yet; dump + paste covers it for now): SQL's `SELECT ... INTO new_table`, `CREATE [TEMPORARY] TABLE new AS SELECT ...` and `INSERT INTO existing SELECT ...`. Here perhaps `create copy as read workouts where ...` and `insert copy read workouts where ...`. A core query-language feature, not a CLI one.
 
 ## Release
 
