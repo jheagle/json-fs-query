@@ -53,7 +53,7 @@ const groupKeys = new Set(['field', 'value', 'missing', 'rows', 'groups'])
  * Whether a value is one group of a grouped read: a field name, then either its rows or its groups, and nothing else.
  * @param value
  */
-const isGroup = (value: unknown): value is Group => isPlainObject(value) &&
+export const isGroup = (value: unknown): value is Group => isPlainObject(value) &&
   typeof value['field'] === 'string' &&
   Array.isArray(value['rows']) !== Array.isArray(value['groups']) &&
   Object.keys(value).every(key => groupKeys.has(key))

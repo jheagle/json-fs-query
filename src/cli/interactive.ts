@@ -4,7 +4,8 @@ import { QueryStatus, queryStatus } from '../data/queries/queryStatus'
 import { query } from '../data/queries/query'
 import { getSetting } from '../data/utilities/config'
 import { chooseDatabase, DatabaseOptions } from './chooseDatabase'
-import { printError, printResults } from './output'
+import { defaultMarkers } from './formatResult'
+import { assertPrintable, OutputSettings, outputFormats, OutputFormat, printError, printResults } from './output'
 
 export type Session = {
   // Resolves once every line received so far has been handled (including any query it ran)
@@ -12,6 +13,9 @@ export type Session = {
 }
 
 const defaultPrompt: string = 'JSON-Query> '
+
+// A CLI command: a slash and a word, then its value (a query never starts like this; a `/*` comment has no word)
+const commandMatch: RegExp = /^\/([a-z]+)(?:\s+(.*))?$/i
 
 /**
  * Whether text holds anything to run: something other than whitespace and comments.
@@ -40,9 +44,10 @@ const continuePrefix = (waitingFor: string): string => styleText('dim', `${waiti
  * piped input. Piped input (`jfsq < seed.txt`, stdin not a terminal) runs the same way, but quietly: no banner, no
  * prompts and no goodbye, only the results and errors, and the exit code is 1 when any query failed.
  * @param options The database options
+ * @param settings The output format and markers (the /output, /null and /missing commands change them)
  * @returns {Session}
  */
-export const startInteractive = (options: DatabaseOptions): Session => {
+export const startInteractive = (options: DatabaseOptions, settings: OutputSettings): Session => {
   // Reading a file or a pipe rather than a person typing
   const piped: boolean = !process.stdin.isTTY
 
@@ -95,13 +100,59 @@ export const startInteractive = (options: DatabaseOptions): Session => {
   }
 
   /**
+   * Print a confirmation for a person typing; piped input stays quiet, so its output is only results (e.g. for jq).
+   * @param {string} message
+   */
+  const say = (message: string): void => {
+    if (!piped) {
+      console.log(message)
+    }
+  }
+
+  /**
+   * Run one CLI command. Without a value each one says what it is set to now.
+   * @param {string} line The trimmed line, e.g. `/output csv` or `/null (null)`
+   */
+  const runCommand = (line: string): void => {
+    const [, name, value = ''] = line.match(commandMatch)
+    switch (name.toLowerCase()) {
+      case 'output': {
+        const outputFormat = value.toLowerCase() as OutputFormat
+        if (value && !outputFormats.includes(outputFormat)) {
+          failed = true
+          printError(`Unknown output "${value}": use ${outputFormats.join(', ')}`)
+          return
+        }
+        if (value) {
+          settings.format = outputFormat
+        }
+        say(`Output: ${settings.format}`)
+        return
+      }
+      case 'null':
+      case 'missing': {
+        const marker = name.toLowerCase() as 'null' | 'missing'
+        if (value) {
+          settings.markers = { ...settings.markers, [marker]: value }
+        }
+        say(`${marker === 'null' ? 'Null' : 'Missing'} shows as: ${settings.markers[marker] ?? defaultMarkers[marker]}`)
+        return
+      }
+      default:
+        failed = true
+        printError(`Unknown command /${name}: use /output <${outputFormats.join('|')}>, /null <text>, /missing <text> or /exit`)
+    }
+  }
+
+  /**
    * Run a completed buffer through the query parser. A parse or runtime error is printed and the session carries on.
    * @param {string} input The completed query buffer (one or more queries)
    * @returns {Promise<void>}
    */
   const processInput = async (input: string): Promise<void> => {
     try {
-      printResults(await query(input))
+      assertPrintable(settings)
+      printResults(await query(input), settings)
     } catch (error) {
       failed = true
       printError(error)
@@ -123,6 +174,13 @@ export const startInteractive = (options: DatabaseOptions): Session => {
     // Check if the user wants to exit
     if (!inputBuffer && trimmedLine.toLowerCase() === '/exit') {
       rl.close()
+      return
+    }
+
+    // A CLI command (/output, /null, /missing) at the start of a query: never sent to the query parser
+    if (!inputBuffer && commandMatch.test(trimmedLine)) {
+      runCommand(trimmedLine)
+      showPrompt()
       return
     }
 
