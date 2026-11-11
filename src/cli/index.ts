@@ -3,6 +3,7 @@ import * as readline from 'readline'
 import { styleText } from 'util'
 import { QueryStatus, queryStatus } from '../data/queries/queryStatus'
 import { query } from '../data/queries/query'
+import { formatResult } from './formatResult'
 
 const promptPrefix: string = 'JSON-Query> '
 
@@ -56,13 +57,17 @@ console.log('Type "/exit" or press Ctrl+C to quit.\n')
 // Open the session by displaying the initial prompt
 rl.prompt()
 
+// Dim the markers only on a terminal, and never with NO_COLOR set (https://no-color.org)
+const color: boolean = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR
+
 /**
- * Print each query's result. Raw JSON for now; table output is a later task.
+ * Print each query's result as a table (see formatResult), each followed by a blank line (as psql does) so results
+ * stay apart when several print in a row.
  * @param {Array<*>} results One result per query in the buffer
  */
 const printResults = (results: Array<unknown>): void => {
   for (const result of results) {
-    console.log(JSON.stringify(result, null, 2))
+    console.log(`${formatResult(result, { color })}\n`)
   }
 }
 

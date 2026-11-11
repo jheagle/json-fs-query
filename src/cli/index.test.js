@@ -244,13 +244,21 @@ describe('the interactive CLI', () => {
     expect(process.exit).not.toHaveBeenCalled()
   })
 
-  test('the buffer is passed to query() and each result is printed as JSON', async () => {
+  test('the buffer is passed to query() and each result is printed as a table', async () => {
     mockQuery.mockResolvedValue([[{ id: 1, note: 'hello' }], []])
     const rl = startCli()
     await send(rl, 'read foo; read bar;')
     expect(receivedQueries()).toEqual(['read foo; read bar;'])
-    expect(output('log')).toContain(JSON.stringify([{ id: 1, note: 'hello' }], null, 2))
-    expect(output('log')).toContain('[]')
+    expect(output('log')).toContain([
+      '+----+-------+',
+      '| id | note  |',
+      '+----+-------+',
+      '| 1  | hello |',
+      '+----+-------+',
+      '(1 row)',
+      ''
+    ].join('\n'))
+    expect(output('log')).toContain('(0 rows)\n')
   })
 
   test('a query error is printed and the session returns to the prompt', async () => {
@@ -297,7 +305,7 @@ describe('the interactive CLI', () => {
 
     finish()
     await idle()
-    expect(output('log')).toContain(JSON.stringify(['done'], null, 2))
+    expect(output('log').join('\n')).toContain('| done  |')
     expect(receivedQueries()).toEqual(['read foo;', 'read bar;'])
     expect(output('error')).toEqual([])
     expect(process.exit).toHaveBeenCalledWith(0)
