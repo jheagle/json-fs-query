@@ -10,6 +10,8 @@
     "outDir": "dist",
     "declarationMap": true,
     "strictNullChecks": false,
-    "types": []
+    "types": [
+      "node"
+    ]
   }
 }

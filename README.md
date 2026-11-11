@@ -95,6 +95,9 @@ test that calls `checkPacked()` (see Packed tables) catches a forgotten `packDat
 npm install json-fs-query
 ```
 
+It comes with a command line, `jfsq` (also `json-fs-query`): `npx jfsq` opens a prompt on the `database/` folder (see
+[Command line](#command-line-jfsq)).
+
 ## Usage
 
 ```js
@@ -517,7 +520,7 @@ new fields. The `alter()` function takes the same changes as objects, e.g.
 
 ### Reading a query over several lines: `queryStatus()`
 
-For a prompt which reads a query line by line (like the CLI), `queryStatus()` says whether the text so far is ready to
+For a prompt which reads a query line by line (like the [command line](#command-line-jfsq)'s), `queryStatus()` says whether the text so far is ready to
 run, and if not, what it is waiting for: `'` or `"` (a string), `/*` (a comment), `[` or `(` (a bracket), or `;`.
 Join the lines with `'\n'`, since a `--` comment ends at the end of its line.
 
@@ -678,6 +681,99 @@ is changed. Node only, like every write.
 **Upgrading a database kept in git:** before this setting every file was written indented, so after upgrading each
 file turns compact the next time it changes, and diffs mix both. Either run `formatDatabase('compact')` once and commit
 the result on its own, or set `format: 'pretty'` to keep writing indented files.
+
+## Command line: `jfsq`
+
+`jfsq` (or `json-fs-query`) runs queries from a terminal or a script: a prompt for trying things, `-q` for one query,
+or a file of queries piped in to set a database up.
+
+```shell
+npx jfsq                                    # the prompt, on database/ in the current folder
+npx jfsq -q "read workouts where reps > 8"  # run it, print the result, exit
+npx jfsq -d site/database < seed.txt        # run every query in a file
+```
+
+| Option | |
+| --- | --- |
+| `-q, --query <query>` | run this query (or several, separated by `;`), print the results and exit |
+| `-d, --database <path>` | the database folder (default `database/`); with `--databases`, the name of a database in that folder |
+| `--databases <folder>` | a folder holding several databases (see [Several databases](#several-databases-databasespath-use)) |
+| `-o, --output <format>` | how results print: `table` (the default), `json`, `csv` or `dump` (see Output) |
+| `--null <text>` | how a table shows `null` (default `NULL`) |
+| `--missing <text>` | how a table shows a missing field (default `—`) |
+| `-v, --version` | print the version |
+| `-h, --help` | list the options, with examples |
+
+### The prompt
+
+Without `-q`, `jfsq` opens a prompt. A query runs once it ends with a `;` outside any string, bracket or comment, so a
+query can take several lines; the continuation prompt shows what it is still waiting for (`'>` for an open string,
+`(>` for a bracket, `;>` for the end), the way psql does (see [`queryStatus()`](#reading-a-query-over-several-lines-querystatus)).
+An error is printed and the prompt carries on. Ctrl+C clears the query being typed; on an empty prompt, Ctrl+C or
+`/exit` quits.
+
+```text
+JSON-Query> read workouts
+         ;>   where reps > 8;
++--------------------------------------+------+------------+
+| _id                                  | reps | date       |
++--------------------------------------+------+------------+
+| 9f3c1e2a-5b7d-4e8f-a1c2-3d4e5f6a7b8c | 10   | 2024-06-02 |
++--------------------------------------+------+------------+
+(1 row)
+```
+
+With `--databases`, the prompt names the database in use (`real> `) and follows a `use` in a query.
+
+Commands start with a `/` and only count at the start of a query (they're never sent to the query parser, and a query
+can still start with a `/* comment */`). Without a value, each says what it is set to:
+
+| Command | |
+| --- | --- |
+| `/output <format>` | how the next results print: `table`, `json`, `csv` or `dump` |
+| `/null <text>` | how a table shows `null` |
+| `/missing <text>` | how a table shows a missing field |
+| `/exit` | quit |
+
+### Output
+
+- **table** (the default): a table per result, with a row count. Each column is a field, in the order they first
+  appear. A field a row doesn't have shows `—`, `null` shows `NULL` and the empty string `''`, so the three read
+  differently without colour (on a terminal they are also dimmed; never with `NO_COLOR`, or when the output isn't a
+  terminal). A table that shows `—` or `NULL` has a one-line legend under it. A grouped read is a heading and a table
+  per group (`date = 2024-06-02 (3 rows)`, `date is missing (1 row)`), nested groups indented under theirs. A result
+  that isn't rows (`describe`) prints as JSON.
+- **json**: each result as JSON, one value per query (`jq` reads several as a stream): `jfsq -o json -q "read
+  workouts" | jq '.[].reps'`.
+- **csv**: a header line, then a line per row; a field is quoted when it holds a comma, a quote, a line break or space
+  at either end. `null` and a missing field are empty, the empty string is `""` (as psql's CSV output does). A grouped
+  read is its rows: `jfsq -o csv -q "read workouts" > workouts.csv`.
+- **dump** can be chosen, but isn't available yet: it refuses each query (before running it). It is meant to print
+  the queries that would rebuild a record (its `create`, then an `insert` per row) for you to run or edit.
+
+### Scripts and seed files
+
+Queries piped in (`jfsq < seed.txt`, or `generate-queries | jfsq`) run the same way as at the prompt, but quietly:
+only results (on stdout) and errors (on stderr), no prompts. Every query runs even after one fails, and the last one
+runs without its closing `;`. Commands such as `/output json` work in the file too.
+
+```sql
+-- seed.txt
+create if not exists workouts (_id string auto, reps int, date string, primary key (_id));
+insert workouts values (reps = 10, date = '2024-06-02'), (reps = 12, date = '2024-06-05');
+```
+
+`if not exists` makes the `create` safe to run twice; the `insert` isn't (running the file again adds the rows again).
+
+The exit code is 0 when everything worked and 1 when anything failed: a query, a bad option, or a database that
+doesn't exist (then nothing runs). The same goes for `-q`, so a script can check it:
+
+```shell
+jfsq -d site/database < seed.txt || echo "seeding failed"
+```
+
+The command line is a separate process: a server and `jfsq` writing to the same folder at the same time aren't
+protected from each other (see [Several calls at once](#several-calls-at-once)).
 
 ## Several calls at once
 
