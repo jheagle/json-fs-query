@@ -41,11 +41,23 @@ export const retrieveEntryRows = async (record: recordDefinition, files: string[
 }
 
 /**
- * Every row of a record, in the record's order: from its packed file when there's one that matches (see
- * retrievePacked), otherwise from its entry files, several at a time (see retrieveFiles).
- * @param entity
+ * A slice of a record's rows by position, like limitOffset's: skip `offset` rows, then keep at most `limit`.
  */
-export const retrieveRecords = async (entity = '') => {
+export type RowRange = { offset?: number, limit?: number }
+
+/**
+ * Every row of a record, in the record's order: from its packed file when there's one that matches (see
+ * retrievePacked), otherwise from its entry files, several at a time (see retrieveFiles). With a range, only the
+ * entry files in that range are read: `read t limit 1` reads one file, not the whole record.
+ * @param entity
+ * @param range - Which rows, by position in the record's order (default every row).
+ */
+export const retrieveRecords = async (entity = '', range?: RowRange) => {
   const recordFile = await retrieveRecord(entity)
-  return retrieveEntryRows(recordFile, recordFile.entries)
+  if (!range) {
+    return retrieveEntryRows(recordFile, recordFile.entries)
+  }
+  const start = range.offset ?? 0
+  const end = typeof range.limit === 'number' ? start + range.limit : undefined
+  return retrieveEntryRows(recordFile, recordFile.entries.slice(start, end))
 }

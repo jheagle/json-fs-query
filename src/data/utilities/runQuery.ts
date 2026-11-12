@@ -97,6 +97,18 @@ export const runQuery = async (parsed) => {
   const entityResolved = resolved.has(parsed.entity)
   // The join is joinEntity's (below), for rows an index narrowed too
 
+  // A read that keeps rows by position only (limit/offset, and nothing that filters, reorders, groups or joins first)
+  // keeps exactly the rows at those positions in the record's order, so only those entry files are read: `read t
+  // limit 1` used to read every row of t, then keep one
+  const ranged = parsed.command === 'read' &&
+    (typeof parsed.limit === 'number' || typeof parsed.offset === 'number') &&
+    typeof parsed.where === 'undefined' &&
+    typeof parsed.joinEntity === 'undefined' &&
+    !parsed.joinClauses.length &&
+    !parsed.mergeJoins.length &&
+    !parsed.sortClauses.length &&
+    !parsed.groupBy?.length
+
   // delete/update act on whatever is already in dataSet[entity] - unlike read, which loads
   // everything and lets the where-reduce below narrow it down afterward, they never get a second
   // pass. So every condition is applied to the candidates (all rows, or the ones the indexes picked)
@@ -117,7 +129,7 @@ export const runQuery = async (parsed) => {
       break
     case 'read':
       if (!entityResolved) {
-        dataSet = await readEntity(parsed.entity, dataSet)
+        dataSet = await readEntity(parsed.entity, dataSet, ranged ? { offset: parsed.offset, limit: parsed.limit } : undefined)
       }
       break
     case 'update':
@@ -126,7 +138,9 @@ export const runQuery = async (parsed) => {
     default:
       throw new Error(`Unknown command: ${parsed.command}`)
   }
-  dataSet = await joinEntity(parsed.entity, parsed.joinEntity, dataSet, parsed.joinClauses, entityResolved, resolved.has(parsed.joinEntity))
+  // A ranged read's rows are loaded too, even when the range is empty (limit 0, or an offset past the end): an empty
+  // list would otherwise read as "not loaded yet" and every row would be read
+  dataSet = await joinEntity(parsed.entity, parsed.joinEntity, dataSet, parsed.joinClauses, entityResolved || ranged, resolved.has(parsed.joinEntity))
   dataSet = await mergeJoins(dataSet, parsed.mergeJoins)
 
   // delete/update already had parsed.where applied above, before they ran. Re-applying the
@@ -140,7 +154,10 @@ export const runQuery = async (parsed) => {
   // Sorted before grouping, so the groups come in sorted order; limit and offset count groups once there are any
   dataSet[parsed.entity] = sortBy(dataSet[parsed.entity], parsed.sortClauses)
   dataSet[parsed.entity] = groupBy(dataSet[parsed.entity], parsed.groupBy)
-  dataSet[parsed.entity] = limitOffset(dataSet[parsed.entity], parsed.offset, parsed.limit)
+  // A ranged read already read only the rows in range
+  if (!ranged) {
+    dataSet[parsed.entity] = limitOffset(dataSet[parsed.entity], parsed.offset, parsed.limit)
+  }
   dataSet[parsed.entity] = selectFields(dataSet[parsed.entity], parsed.selectClauses, Boolean(parsed.groupBy?.length), parsed.entity)
 
   return dataSet

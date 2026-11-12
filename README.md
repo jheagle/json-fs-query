@@ -393,6 +393,11 @@ read workouts.exercises select date, reps
 Two clauses carry on instead of repeating: `and on` adds another join step, and a `merge` straight after another
 (with or without `and`) adds another merge.
 
+A read with only `limit` and/or `offset` (plus `select`) reads only the rows it returns: `read t limit 1` reads one
+row's file, not the whole record. With anything that decides which rows count or come first (`where`, `sort`,
+`group by`, a join or merge), every candidate row is read (all of them, or the ones an index picks), then `limit` and
+`offset` apply.
+
 Anything else is an error that says what's wrong:
 
 | Query | Error |
