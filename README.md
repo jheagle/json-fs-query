@@ -398,6 +398,13 @@ row's file, not the whole record. With anything that decides which rows count or
 `group by`, a join or merge), every candidate row is read (all of them, or the ones an index picks), then `limit` and
 `offset` apply.
 
+**Row order.** As in SQL, rows come in no guaranteed order unless the query has a `sort`. Today a read without a
+`where` (or with an unindexed one) returns rows in the record's order, but an indexed `where` returns them in the order
+they joined that index value. So after an update moves a row to a new value, the same rows can come back in a
+different order depending on whether an index was used. When order matters, `sort`; for paging with `limit` and
+`offset`, end the sort with a unique field (`sort date desc, _id`) so rows with equal values keep the same order from
+page to page.
+
 Anything else is an error that says what's wrong:
 
 | Query | Error |
