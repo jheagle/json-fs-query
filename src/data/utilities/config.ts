@@ -27,7 +27,8 @@ let activeCalls = 0
 
 const databaseNameMatch: RegExp = /^[a-z0-9_-]+$/i
 
-const withSlash = (path: string): string => path.endsWith('/') ? path : `${path}/`
+/** A folder path with its trailing slash, since file names are joined straight onto it ('' stays '': the current folder). */
+const withSlash = (path: string): string => path === '' || path.endsWith('/') ? path : `${path}/`
 
 /**
  * The folder of the database in use: `<databasesPath>/<database>/` once both are configured (see configure and the
@@ -35,7 +36,7 @@ const withSlash = (path: string): string => path.endsWith('/') ? path : `${path}
  */
 export const activeDatabasePath = (): string => settings.databasesPath && settings.database
   ? `${withSlash(settings.databasesPath)}${settings.database}/`
-  : getSetting('databasePath', 'database/')
+  : withSlash(getSetting('databasePath', 'database/'))
 
 /**
  * The folder whose calls are queued together (see withDatabaseLock): with several databases, all of them, since a
