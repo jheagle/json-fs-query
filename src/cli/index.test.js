@@ -370,10 +370,11 @@ describe('choosing the database', () => {
     expect(lastPrompt(rl)).toBe('JSON-Query> ')
   })
 
-  test('-d adds the trailing slash a database folder needs', async () => {
+  test('-d without a trailing slash still means the folder', async () => {
     startCli('-d', 'tasks-db')
     await idle()
-    expect(config.getSetting('databasePath')).toBe('tasks-db/')
+    expect(config.activeDatabasePath()).toBe('tasks-db/')
+    expect(output('log')).toContain('Database: tasks-db/\n')
   })
 
   test('--database is the long form of -d', async () => {
@@ -496,7 +497,7 @@ describe('running a query directly (-q)', () => {
   test('the database options apply before the query runs', async () => {
     let databasePath
     mockQuery.mockImplementation(async () => {
-      databasePath = config.getSetting('databasePath')
+      databasePath = config.activeDatabasePath()
       return []
     })
     startCli('-d', 'tasks-db', '-q', 'read tasks')

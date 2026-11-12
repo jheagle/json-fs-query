@@ -22,8 +22,8 @@ export const chooseDatabase = async (options: DatabaseOptions): Promise<string> 
     // Checks that it exists (configure only checks the name)
     await useDatabase(options.database)
   } else if (options.database) {
-    // databasePath is joined straight onto file names, so it needs its trailing slash (`-d data` is data/)
-    configure({ databasePath: options.database.endsWith('/') ? options.database : `${options.database}/` })
+    // `-d data` is the folder data/ (configure adds the trailing slash when reading it)
+    configure({ databasePath: options.database })
   }
   return `Database: ${activeDatabasePath()}`
 }
