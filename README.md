@@ -1,5 +1,7 @@
 # json-fs-query
 
+[![tests](https://github.com/jheagle/json-fs-query/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/jheagle/json-fs-query/actions/workflows/tests.yml)
+
 A git-native JSON data store for static sites. Your data lives in a folder of plain JSON files, committed with the
 rest of the site: readable, diffable and reviewed in pull requests like code. json-fs-query adds what a folder of
 files doesn't have on its own:
