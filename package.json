@@ -55,7 +55,7 @@
     "@babel/core": "^8.1.0",
     "@types/node": "^26.6.5",
     "gulp": "^5.0.1",
-    "js-build-tools": "^8.2.0",
+    "js-build-tools": "^9.1.0",
     "playwright": "^1.65.0",
     "release-it": "^21.1.1",
     "test-filesystem": "^2.0.2",
